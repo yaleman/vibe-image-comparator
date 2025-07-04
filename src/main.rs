@@ -12,6 +12,7 @@ use walkdir::WalkDir;
 struct Config {
     grid_size: u32,
     threshold: u32,
+    database_path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -27,34 +28,121 @@ struct HashCache {
 }
 
 impl HashCache {
-    fn new() -> Result<Self> {
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("vibe-image-comparator");
+    fn new(database_path: Option<&str>) -> Result<Self> {
+        let conn = if let Some(path) = database_path {
+            Connection::open(path)?
+        } else {
+            let cache_dir = dirs::cache_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join("vibe-image-comparator");
+            
+            fs::create_dir_all(&cache_dir)?;
+            let db_path = cache_dir.join("hashes.db");
+            Connection::open(db_path)?
+        };
         
-        fs::create_dir_all(&cache_dir)?;
-        let db_path = cache_dir.join("hashes.db");
+        Self::create_tables(&conn)?;
+        Self::migrate_old_schema(&conn)?;
         
-        let conn = Connection::open(db_path)?;
-        
+        Ok(HashCache { conn })
+    }
+    
+    #[cfg(test)]
+    fn new_in_memory() -> Result<Self> {
+        let conn = Connection::open(":memory:")?;
+        Self::create_tables(&conn)?;
+        Ok(HashCache { conn })
+    }
+    
+    fn create_tables(conn: &Connection) -> Result<()> {
+        // Create perceptual_hashes table first (referenced table)
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS file_hashes (
+            "CREATE TABLE IF NOT EXISTS perceptual_hashes (
                 id INTEGER PRIMARY KEY,
-                path TEXT UNIQUE NOT NULL,
-                size INTEGER NOT NULL,
-                sha256 TEXT NOT NULL,
+                sha256 TEXT UNIQUE NOT NULL,
                 perceptual_hash BLOB NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )",
             [],
         )?;
         
-        Ok(HashCache { conn })
+        // Create files table with foreign key reference
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS files (
+                id INTEGER PRIMARY KEY,
+                path TEXT UNIQUE NOT NULL,
+                size INTEGER NOT NULL,
+                perceptual_hash_id INTEGER NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (perceptual_hash_id) REFERENCES perceptual_hashes(id)
+            )",
+            [],
+        )?;
+        
+        // Enable foreign key constraints
+        conn.execute("PRAGMA foreign_keys = ON", [])?;
+        
+        Ok(())
+    }
+    
+    fn migrate_old_schema(conn: &Connection) -> Result<()> {
+        // Check if old table exists
+        let mut stmt = conn.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='file_hashes'"
+        )?;
+        let old_table_exists = stmt.exists([])?;
+        
+        if old_table_exists {
+            println!("Migrating existing cache data to normalized schema...");
+            
+            // Read all data from old table
+            let mut stmt = conn.prepare(
+                "SELECT path, size, sha256, perceptual_hash FROM file_hashes"
+            )?;
+            let old_data: Vec<(String, i64, String, Vec<u8>)> = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Vec<u8>>(3)?,
+                ))
+            })?.collect::<Result<Vec<_>, _>>()?;
+            
+            // Insert into new normalized tables
+            for (path, size, sha256, perceptual_hash) in old_data {
+                // Insert or get perceptual hash ID
+                conn.execute(
+                    "INSERT OR IGNORE INTO perceptual_hashes (sha256, perceptual_hash) VALUES (?1, ?2)",
+                    params![sha256, perceptual_hash],
+                )?;
+                
+                let perceptual_hash_id: i64 = conn.query_row(
+                    "SELECT id FROM perceptual_hashes WHERE sha256 = ?1",
+                    params![sha256],
+                    |row| row.get(0),
+                )?;
+                
+                // Insert file record
+                conn.execute(
+                    "INSERT OR IGNORE INTO files (path, size, perceptual_hash_id) VALUES (?1, ?2, ?3)",
+                    params![path, size, perceptual_hash_id],
+                )?;
+            }
+            
+            // Drop old table
+            conn.execute("DROP TABLE file_hashes", [])?;
+            println!("Migration completed successfully");
+        }
+        
+        Ok(())
     }
     
     fn get_cached_hash(&self, path: &Path, size: u64, sha256: &str) -> Result<Option<Vec<u8>>> {
         let mut stmt = self.conn.prepare(
-            "SELECT perceptual_hash FROM file_hashes WHERE path = ?1 AND size = ?2 AND sha256 = ?3"
+            "SELECT ph.perceptual_hash 
+             FROM files f 
+             JOIN perceptual_hashes ph ON f.perceptual_hash_id = ph.id 
+             WHERE f.path = ?1 AND f.size = ?2 AND ph.sha256 = ?3"
         )?;
         
         let mut rows = stmt.query_map(params![path.to_string_lossy(), size, sha256], |row| {
@@ -69,20 +157,33 @@ impl HashCache {
     }
     
     fn store_hash(&self, metadata: &FileMetadata) -> Result<()> {
+        // Insert or get perceptual hash ID
         self.conn.execute(
-            "INSERT OR REPLACE INTO file_hashes (path, size, sha256, perceptual_hash) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT OR IGNORE INTO perceptual_hashes (sha256, perceptual_hash) VALUES (?1, ?2)",
+            params![metadata.sha256, metadata.perceptual_hash],
+        )?;
+        
+        let perceptual_hash_id: i64 = self.conn.query_row(
+            "SELECT id FROM perceptual_hashes WHERE sha256 = ?1",
+            params![metadata.sha256],
+            |row| row.get(0),
+        )?;
+        
+        // Insert or replace file record
+        self.conn.execute(
+            "INSERT OR REPLACE INTO files (path, size, perceptual_hash_id) VALUES (?1, ?2, ?3)",
             params![
                 metadata.path.to_string_lossy(),
                 metadata.size,
-                metadata.sha256,
-                metadata.perceptual_hash
+                perceptual_hash_id
             ],
         )?;
+        
         Ok(())
     }
     
     fn cleanup_missing_files(&self) -> Result<usize> {
-        let mut stmt = self.conn.prepare("SELECT path FROM file_hashes")?;
+        let mut stmt = self.conn.prepare("SELECT path FROM files")?;
         let paths: Vec<String> = stmt.query_map([], |row| {
             row.get::<_, String>(0)
         })?.collect::<Result<Vec<_>, _>>()?;
@@ -91,12 +192,53 @@ impl HashCache {
         for path_str in paths {
             let path = PathBuf::from(&path_str);
             if !path.exists() {
-                self.conn.execute("DELETE FROM file_hashes WHERE path = ?1", params![path_str])?;
+                self.conn.execute("DELETE FROM files WHERE path = ?1", params![path_str])?;
                 deleted += 1;
             }
         }
         
+        // Clean up orphaned perceptual hashes (not referenced by any files)
+        let orphaned = self.conn.execute(
+            "DELETE FROM perceptual_hashes 
+             WHERE id NOT IN (SELECT DISTINCT perceptual_hash_id FROM files)",
+            [],
+        )?;
+        
+        if orphaned > 0 {
+            println!("Cleaned up {orphaned} orphaned perceptual hashes");
+        }
+        
         Ok(deleted)
+    }
+    
+    #[allow(dead_code)]
+    fn debug_tables(&self) -> Result<()> {
+        println!("\n=== Database Debug Info ===");
+        
+        // Count files
+        let file_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM files",
+            [],
+            |row| row.get(0),
+        )?;
+        println!("Files table: {file_count} entries");
+        
+        // Count perceptual hashes
+        let hash_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM perceptual_hashes",
+            [],
+            |row| row.get(0),
+        )?;
+        println!("Perceptual hashes table: {hash_count} entries");
+        
+        // Show deduplication ratio
+        if file_count > 0 && hash_count > 0 {
+            let ratio = hash_count as f64 / file_count as f64;
+            println!("Deduplication ratio: {:.2} (lower = more deduplication)", ratio);
+        }
+        
+        println!("=== End Debug Info ===\n");
+        Ok(())
     }
 }
 
@@ -120,6 +262,7 @@ impl Default for Config {
         Self {
             grid_size: 16,
             threshold: 5,
+            database_path: None,
         }
     }
 }
@@ -147,8 +290,10 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     
+    let config = load_config()?;
+    
     let cache = if !args.no_cache {
-        Some(HashCache::new()?)
+        Some(HashCache::new(config.database_path.as_deref())?)
     } else {
         None
     };
@@ -170,7 +315,6 @@ fn main() -> Result<()> {
         std::process::exit(1);
     }
     
-    let config = load_config()?;
     let threshold = args.threshold.unwrap_or(config.threshold);
     let grid_size = args.grid_size.unwrap_or(config.grid_size);
     
@@ -431,8 +575,10 @@ mod tests {
         
         assert_eq!(images.len(), 3, "Should find exactly 3 images in test_images/all_same");
         
+        // Test with in-memory cache
+        let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
         let grid_size = 16;
-        let hashes = generate_hashes(&images, grid_size).expect("Failed to generate hashes");
+        let hashes = generate_hashes_with_cache(&images, grid_size, &cache).expect("Failed to generate hashes");
         
         assert_eq!(hashes.len(), 3, "Should generate 3 hashes");
         
@@ -455,6 +601,10 @@ mod tests {
         assert!(found_extensions.contains("jpg"), "Should find .jpg file");
         assert!(found_extensions.contains("png"), "Should find .png file");
         assert!(found_extensions.contains("webp"), "Should find .webp file");
+        
+        // Test cache hit on second run
+        let hashes2 = generate_hashes_with_cache(&images, grid_size, &cache).expect("Failed to generate hashes second time");
+        assert_eq!(hashes2.len(), 3, "Should generate 3 hashes on cache hit");
     }
 
     #[test]
@@ -490,8 +640,10 @@ mod tests {
         
         assert_eq!(images.len(), 2, "Should find exactly 2 images in test_images/rotated");
         
+        // Test with in-memory cache
+        let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
         let grid_size = 16;
-        let hashes = generate_hashes(&images, grid_size).expect("Failed to generate hashes");
+        let hashes = generate_hashes_with_cache(&images, grid_size, &cache).expect("Failed to generate hashes");
         
         assert_eq!(hashes.len(), 2, "Should generate 2 hashes");
         

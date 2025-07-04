@@ -37,13 +37,15 @@ Example config file:
 ```json
 {
   "grid_size": 64,
-  "threshold": 8
+  "threshold": 8,
+  "database_path": "/custom/path/to/cache.db"
 }
 ```
 
 Configuration options:
 - `grid_size`: Hash grid size (e.g., 64 for 64x64 grid) - higher values = more precision
 - `threshold`: Similarity threshold (0-max, lower = more similar)
+- `database_path`: Custom path for the cache database (optional, defaults to XDG cache directory)
 
 ## Usage
 ```bash
@@ -71,11 +73,13 @@ just run /path/to/images --threshold 10 --grid-size 64
 
 ## Caching System
 The tool includes a SQLite-based caching system to speed up repeated scans:
-- Stores file path, size, SHA256 hash, and perceptual hash
-- Automatically validates cached entries using file metadata
-- Cache location: `~/.cache/vibe-image-comparator/hashes.db` (XDG cache directory)
-- Significantly faster on repeat scans of the same files
-- Use `--no-cache` to disable or `--clean-cache` to remove stale entries
+- **Normalized schema**: Separate tables for files and perceptual hashes to reduce data duplication
+- **Deduplication**: Multiple files with identical content share the same perceptual hash entry
+- **File integrity**: Uses SHA256 + file size to validate cached entries
+- **Test isolation**: Tests use in-memory databases to avoid side effects
+- **Configurable location**: Default `~/.cache/vibe-image-comparator/hashes.db` or custom path via config
+- **Performance**: Significantly faster on repeat scans (cache hits vs. misses shown)
+- **Maintenance**: Use `--no-cache` to disable or `--clean-cache` to remove stale entries
 
 ## Dependencies
 - `clap` - CLI argument parsing
