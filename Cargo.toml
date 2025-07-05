@@ -1,7 +1,13 @@
 [package]
 name = "vibe-image-comparator"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "A fast Rust CLI tool for finding duplicate images using rotation-invariant perceptual hashing"
+repository = "https://github.com/yaleman/vibe-image-comparator"
+license = "MIT"
+keywords = ["images", "duplicates", "perceptual", "hash", "cli"]
+categories = ["command-line-utilities", "multimedia::images"]
+authors = ["yaleman"]
 
 [dependencies]
 anyhow = "1.0.98"
