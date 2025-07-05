@@ -1,3 +1,6 @@
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::expect_used)]
+
 use anyhow::Result;
 use clap::Parser;
 use img_hash::{HasherConfig, HashAlg};
@@ -512,20 +515,30 @@ fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCa
         for (image_path, size, sha256) in files_to_process {
             match image::open(&image_path) {
                 Ok(img) => {
-                    let hash = generate_rotation_invariant_hash(&hasher, &img);
-                    let metadata = FileMetadata {
-                        path: image_path.clone(),
-                        size,
-                        sha256,
-                        perceptual_hash: hash.as_bytes().to_vec(),
-                    };
-                    
-                    if let Err(e) = cache.store_hash(&metadata) {
-                        eprintln!("Warning: Could not cache hash for {}: {}", image_path.display(), e);
+                    match generate_rotation_invariant_hash_safe(&hasher, &img) {
+                        Ok(hash) => {
+                            let metadata = FileMetadata {
+                                path: image_path.clone(),
+                                size,
+                                sha256,
+                                perceptual_hash: hash.as_bytes().to_vec(),
+                            };
+                            
+                            if let Err(e) = cache.store_hash(&metadata) {
+                                eprintln!("Warning: Could not cache hash for {}: {}", image_path.display(), e);
+                            }
+                            
+                            hashes.push((image_path, hash));
+                            cache_misses += 1;
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Could not generate hash for {}: {}", image_path.display(), e);
+                            // Remove broken file from cache if it exists
+                            if let Err(cache_err) = cache.remove_file_entry(&image_path) {
+                                eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
+                            }
+                        }
                     }
-                    
-                    hashes.push((image_path, hash));
-                    cache_misses += 1;
                 }
                 Err(e) => {
                     eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
@@ -565,15 +578,21 @@ fn generate_hashes(images: &[PathBuf], grid_size: u32) -> Result<Vec<(PathBuf, i
     let mut hashes = Vec::new();
     for image_result in image_results {
         if let Some((image_path, img)) = image_result {
-            let hash = generate_rotation_invariant_hash(&hasher, &img);
-            hashes.push((image_path, hash));
+            match generate_rotation_invariant_hash_safe(&hasher, &img) {
+                Ok(hash) => {
+                    hashes.push((image_path, hash));
+                }
+                Err(e) => {
+                    eprintln!("Warning: Could not generate hash for {}: {}", image_path.display(), e);
+                }
+            }
         }
     }
     
     Ok(hashes)
 }
 
-fn generate_rotation_invariant_hash(hasher: &img_hash::Hasher<Box<[u8]>>, img: &image::DynamicImage) -> img_hash::ImageHash<Box<[u8]>> {
+fn generate_rotation_invariant_hash_safe(hasher: &img_hash::Hasher<Box<[u8]>>, img: &image::DynamicImage) -> Result<img_hash::ImageHash<Box<[u8]>>> {
     let original_hash = hasher.hash_image(img);
     let rotated_90 = img.rotate90();
     let rotated_90_hash = hasher.hash_image(&rotated_90);
@@ -590,7 +609,9 @@ fn generate_rotation_invariant_hash(hasher: &img_hash::Hasher<Box<[u8]>>, img: &
     ];
     
     candidates.sort_by_key(|(bytes, _)| bytes.clone());
-    candidates.into_iter().next().unwrap().1
+    candidates.into_iter().next()
+        .map(|(_, hash)| hash)
+        .ok_or_else(|| anyhow::anyhow!("No rotation candidate hashes generated"))
 }
 
 fn find_duplicates(hashes: &[(PathBuf, img_hash::ImageHash)], threshold: u32) -> Vec<Vec<PathBuf>> {
@@ -636,6 +657,8 @@ fn find_duplicates(hashes: &[(PathBuf, img_hash::ImageHash)], threshold: u32) ->
 
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use std::fs;
@@ -770,7 +793,7 @@ mod tests {
         
         // Should only find the real image, broken symlink should be skipped
         assert_eq!(images.len(), 1, "Should find only the real image file");
-        assert!(images[0].file_name().unwrap() == "real_image.jpg", "Should find the real image");
+        assert!(images[0].file_name().expect("File should have a name") == "real_image.jpg", "Should find the real image");
         
         // Test with cache to ensure broken symlink handling in cache operations
         let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
