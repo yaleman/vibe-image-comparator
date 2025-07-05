@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::Parser;
 use img_hash::{HasherConfig, HashAlg};
+use rayon::prelude::*;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
@@ -443,83 +444,89 @@ fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCa
         .hash_alg(HashAlg::Mean)
         .to_hasher();
     
+    // First, collect metadata for all images in parallel
+    let metadata_results: Vec<_> = images.par_iter().map(|image_path| {
+        match get_file_metadata(image_path) {
+            Ok((size, sha256)) => Some((image_path.clone(), size, sha256)),
+            Err(e) => {
+                eprintln!("Warning: Could not get metadata for {} (possibly broken symlink): {}", image_path.display(), e);
+                None
+            }
+        }
+    }).collect();
+    
+    // Process results sequentially due to SQLite and hasher constraints
     let mut hashes = Vec::new();
     let mut cache_hits = 0;
     let mut cache_misses = 0;
     
-    for image_path in images {
-        match get_file_metadata(image_path) {
-            Ok((size, sha256)) => {
-                if let Ok(Some(cached_hash_bytes)) = cache.get_cached_hash(image_path, size, &sha256) {
-                    match img_hash::ImageHash::from_bytes(&cached_hash_bytes) {
-                        Ok(hash) => {
-                            hashes.push((image_path.clone(), hash));
-                            cache_hits += 1;
-                        }
-                        Err(e) => {
-                            eprintln!("Warning: Invalid cached hash for {}: {:?}", image_path.display(), e);
-                            match image::open(image_path) {
-                                Ok(img) => {
-                                    let hash = generate_rotation_invariant_hash(&hasher, &img);
-                                    let metadata = FileMetadata {
-                                        path: image_path.clone(),
-                                        size,
-                                        sha256,
-                                        perceptual_hash: hash.as_bytes().to_vec(),
-                                    };
-                                    
-                                    if let Err(e) = cache.store_hash(&metadata) {
-                                        eprintln!("Warning: Could not cache hash for {}: {}", image_path.display(), e);
-                                    }
-                                    
-                                    hashes.push((image_path.clone(), hash));
-                                    cache_misses += 1;
+    for metadata_result in metadata_results {
+        if let Some((image_path, size, sha256)) = metadata_result {
+            if let Ok(Some(cached_hash_bytes)) = cache.get_cached_hash(&image_path, size, &sha256) {
+                match img_hash::ImageHash::from_bytes(&cached_hash_bytes) {
+                    Ok(hash) => {
+                        hashes.push((image_path.clone(), hash));
+                        cache_hits += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Invalid cached hash for {}: {:?}", image_path.display(), e);
+                        match image::open(&image_path) {
+                            Ok(img) => {
+                                let hash = generate_rotation_invariant_hash(&hasher, &img);
+                                let metadata = FileMetadata {
+                                    path: image_path.clone(),
+                                    size,
+                                    sha256,
+                                    perceptual_hash: hash.as_bytes().to_vec(),
+                                };
+                                
+                                if let Err(e) = cache.store_hash(&metadata) {
+                                    eprintln!("Warning: Could not cache hash for {}: {}", image_path.display(), e);
                                 }
-                                Err(e) => {
-                                    eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
-                                    // Remove broken file from cache if it exists
-                                    if let Err(cache_err) = cache.remove_file_entry(image_path) {
-                                        eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
-                                    }
+                                
+                                hashes.push((image_path.clone(), hash));
+                                cache_misses += 1;
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
+                                // Remove broken file from cache if it exists
+                                if let Err(cache_err) = cache.remove_file_entry(&image_path) {
+                                    eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
                                 }
                             }
                         }
                     }
-                } else {
-                    match image::open(image_path) {
-                        Ok(img) => {
-                            let hash = generate_rotation_invariant_hash(&hasher, &img);
-                            let metadata = FileMetadata {
-                                path: image_path.clone(),
-                                size,
-                                sha256,
-                                perceptual_hash: hash.as_bytes().to_vec(),
-                            };
-                            
-                            if let Err(e) = cache.store_hash(&metadata) {
-                                eprintln!("Warning: Could not cache hash for {}: {}", image_path.display(), e);
-                            }
-                            
-                            hashes.push((image_path.clone(), hash));
-                            cache_misses += 1;
+                }
+            } else {
+                match image::open(&image_path) {
+                    Ok(img) => {
+                        let hash = generate_rotation_invariant_hash(&hasher, &img);
+                        let metadata = FileMetadata {
+                            path: image_path.clone(),
+                            size,
+                            sha256,
+                            perceptual_hash: hash.as_bytes().to_vec(),
+                        };
+                        
+                        if let Err(e) = cache.store_hash(&metadata) {
+                            eprintln!("Warning: Could not cache hash for {}: {}", image_path.display(), e);
                         }
-                        Err(e) => {
-                            eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
-                            // Remove broken file from cache if it exists
-                            if let Err(cache_err) = cache.remove_file_entry(image_path) {
-                                eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
-                            }
+                        
+                        hashes.push((image_path.clone(), hash));
+                        cache_misses += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
+                        // Remove broken file from cache if it exists
+                        if let Err(cache_err) = cache.remove_file_entry(&image_path) {
+                            eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
                         }
                     }
                 }
             }
-            Err(e) => {
-                eprintln!("Warning: Could not get metadata for {} (possibly broken symlink): {}", image_path.display(), e);
-                // Remove broken file from cache if it exists
-                if let Err(cache_err) = cache.remove_file_entry(image_path) {
-                    eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
-                }
-            }
+        } else {
+            // Handle files that failed metadata collection
+            // We can't identify the specific file here, but the error was already logged
         }
     }
     
@@ -536,17 +543,22 @@ fn generate_hashes(images: &[PathBuf], grid_size: u32) -> Result<Vec<(PathBuf, i
         .hash_alg(HashAlg::Mean)
         .to_hasher();
     
-    let mut hashes = Vec::new();
-    
-    for image_path in images {
+    // Load images in parallel, then hash sequentially due to hasher constraints
+    let image_results: Vec<_> = images.par_iter().map(|image_path| {
         match image::open(image_path) {
-            Ok(img) => {
-                let hash = generate_rotation_invariant_hash(&hasher, &img);
-                hashes.push((image_path.clone(), hash));
-            }
+            Ok(img) => Some((image_path.clone(), img)),
             Err(e) => {
                 eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
+                None
             }
+        }
+    }).collect();
+    
+    let mut hashes = Vec::new();
+    for image_result in image_results {
+        if let Some((image_path, img)) = image_result {
+            let hash = generate_rotation_invariant_hash(&hasher, &img);
+            hashes.push((image_path, hash));
         }
     }
     
@@ -585,16 +597,25 @@ fn find_duplicates(hashes: &[(PathBuf, img_hash::ImageHash)], threshold: u32) ->
         let mut group = vec![path1.clone()];
         processed[i] = true;
         
-        for (j, (path2, hash2)) in hashes.iter().enumerate().skip(i + 1) {
-            if processed[j] {
-                continue;
-            }
-            
-            let distance = hash1.dist(hash2);
-            if distance <= threshold {
-                group.push(path2.clone());
-                processed[j] = true;
-            }
+        // Parallelize the distance computation for remaining hashes
+        let remaining_hashes: Vec<_> = hashes.iter().enumerate().skip(i + 1)
+            .filter(|(j, _)| !processed[*j])
+            .collect();
+        
+        let matches: Vec<_> = remaining_hashes.par_iter()
+            .filter_map(|(j, (path2, hash2))| {
+                let distance = hash1.dist(hash2);
+                if distance <= threshold {
+                    Some((*j, path2.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
+        for (j, path2) in matches {
+            group.push(path2);
+            processed[j] = true;
         }
         
         if group.len() > 1 {

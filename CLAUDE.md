@@ -23,12 +23,14 @@ A Rust command-line tool that finds duplicate images using perceptual hashing. T
 - Rotation-invariant: generates hashes for all 4 rotations and selects the canonical one
 - Resistant to minor edits, format changes, and rotations
 - Gracefully handles unreadable images with warnings
+- **Parallel processing**: File metadata calculation and image loading parallelized with rayon
 
 ### Duplicate Detection (`find_duplicates`)
 - Compares hash distances using Hamming distance
 - Configurable similarity threshold (default: 15)
 - Groups similar images into duplicate sets
 - Uses efficient processing to avoid redundant comparisons
+- **Parallel processing**: Hash distance computation parallelized for better performance
 
 ## Configuration
 The tool loads configuration from `~/.config/vibe-image-comparator.json` (XDG config directory).
@@ -73,6 +75,7 @@ just run /path/to/images --threshold 10 --grid-size 64
 
 ## Development Practices
 - Use cargo commands instead of editing Cargo.toml directly
+- Commit changes when a task is done
 
 ## Caching System
 The tool includes a SQLite-based caching system to speed up repeated scans:
@@ -88,6 +91,7 @@ The tool includes a SQLite-based caching system to speed up repeated scans:
 - `clap` - CLI argument parsing
 - `image` - Image loading and processing
 - `img_hash` - Perceptual hashing algorithms
+- `rayon` - Parallel processing for improved performance
 - `rusqlite` - SQLite database for hash caching
 - `sha2` - SHA256 hashing for file integrity
 - `walkdir` - Directory traversal

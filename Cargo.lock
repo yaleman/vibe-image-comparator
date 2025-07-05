@@ -882,6 +882,7 @@ dependencies = [
  "dirs",
  "image",
  "img_hash",
+ "rayon",
  "rusqlite",
  "serde",
  "serde_json",
