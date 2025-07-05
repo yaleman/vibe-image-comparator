@@ -211,6 +211,26 @@ impl HashCache {
         Ok(deleted)
     }
     
+    fn remove_file_entry(&self, path: &Path) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM files WHERE path = ?1",
+            params![path.to_string_lossy()],
+        )?;
+        
+        // Clean up orphaned perceptual hashes after removing the file
+        let orphaned = self.conn.execute(
+            "DELETE FROM perceptual_hashes 
+             WHERE id NOT IN (SELECT DISTINCT perceptual_hash_id FROM files)",
+            [],
+        )?;
+        
+        if orphaned > 0 {
+            eprintln!("Cleaned up {orphaned} orphaned perceptual hashes after removing broken file");
+        }
+        
+        Ok(())
+    }
+    
     #[allow(dead_code)]
     fn debug_tables(&self) -> Result<()> {
         println!("\n=== Database Debug Info ===");
@@ -260,8 +280,8 @@ fn get_file_metadata(path: &Path) -> Result<(u64, String)> {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            grid_size: 16,
-            threshold: 5,
+            grid_size: 64,
+            threshold: 15,
             database_path: None,
         }
     }
@@ -377,21 +397,37 @@ fn scan_for_images(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
     
     for path in paths {
         if path.is_file() {
-            if let Some(ext) = path.extension() {
-                if image_extensions.contains(&ext.to_string_lossy().to_lowercase().as_str()) {
-                    images.push(path.clone());
+            // Check if file is accessible (handles broken symlinks)
+            if path.exists() && fs::metadata(path).is_ok() {
+                if let Some(ext) = path.extension() {
+                    if image_extensions.contains(&ext.to_string_lossy().to_lowercase().as_str()) {
+                        images.push(path.clone());
+                    }
                 }
+            } else {
+                eprintln!("Warning: Skipping inaccessible file: {}", path.display());
             }
         } else if path.is_dir() {
             for entry in WalkDir::new(path).follow_links(true) {
-                let entry = entry?;
-                let path = entry.path();
-                
-                if path.is_file() {
-                    if let Some(ext) = path.extension() {
-                        if image_extensions.contains(&ext.to_string_lossy().to_lowercase().as_str()) {
-                            images.push(path.to_path_buf());
+                match entry {
+                    Ok(entry) => {
+                        let path = entry.path();
+                        
+                        if path.is_file() {
+                            // Check if file is accessible (handles broken symlinks)
+                            if path.exists() && fs::metadata(path).is_ok() {
+                                if let Some(ext) = path.extension() {
+                                    if image_extensions.contains(&ext.to_string_lossy().to_lowercase().as_str()) {
+                                        images.push(path.to_path_buf());
+                                    }
+                                }
+                            } else {
+                                eprintln!("Warning: Skipping inaccessible file: {}", path.display());
+                            }
                         }
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Could not access directory entry: {}", e);
                     }
                 }
             }
@@ -441,6 +477,10 @@ fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCa
                                 }
                                 Err(e) => {
                                     eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
+                                    // Remove broken file from cache if it exists
+                                    if let Err(cache_err) = cache.remove_file_entry(image_path) {
+                                        eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
+                                    }
                                 }
                             }
                         }
@@ -465,12 +505,20 @@ fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCa
                         }
                         Err(e) => {
                             eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
+                            // Remove broken file from cache if it exists
+                            if let Err(cache_err) = cache.remove_file_entry(image_path) {
+                                eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
+                            }
                         }
                     }
                 }
             }
             Err(e) => {
-                eprintln!("Warning: Could not get metadata for {}: {}", image_path.display(), e);
+                eprintln!("Warning: Could not get metadata for {} (possibly broken symlink): {}", image_path.display(), e);
+                // Remove broken file from cache if it exists
+                if let Err(cache_err) = cache.remove_file_entry(image_path) {
+                    eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
+                }
             }
         }
     }
@@ -561,7 +609,9 @@ fn find_duplicates(hashes: &[(PathBuf, img_hash::ImageHash)], threshold: u32) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::path::Path;
+    use tempfile::TempDir;
 
     #[test]
     fn test_all_same_directory_finds_three_duplicates() {
@@ -653,5 +703,57 @@ mod tests {
         assert!(!duplicates.is_empty(), "Should find at least 1 duplicate group for rotated images");
         let total_images_in_groups: usize = duplicates.iter().map(|g| g.len()).sum();
         assert_eq!(total_images_in_groups, 2, "Both rotated images should be in duplicate groups");
+    }
+
+    #[test]
+    fn test_broken_symlink_handling() {
+        // Create a temporary directory
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path();
+        
+        // Copy a real image to the temp directory
+        let real_image_path = temp_path.join("real_image.jpg");
+        fs::copy("test_images/all_same/dallepig.jpg", &real_image_path)
+            .expect("Failed to copy test image");
+        
+        // Create a broken symlink
+        let broken_link_path = temp_path.join("broken_link.jpg");
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/nonexistent/path.jpg", &broken_link_path)
+                .expect("Failed to create broken symlink");
+        }
+        #[cfg(windows)]
+        {
+            // On Windows, use a broken junction instead
+            std::fs::write(&broken_link_path, b"not an image")
+                .expect("Failed to create broken file");
+            std::fs::remove_file(&broken_link_path)
+                .expect("Failed to remove temp file");
+            // Create a symlink to a non-existent file
+            std::os::windows::fs::symlink_file("C:\\nonexistent\\path.jpg", &broken_link_path)
+                .expect("Failed to create broken symlink");
+        }
+        
+        // Test scanning with broken symlink
+        let paths = vec![temp_path.to_path_buf()];
+        let images = scan_for_images(&paths).expect("Failed to scan for images");
+        
+        // Should only find the real image, broken symlink should be skipped
+        assert_eq!(images.len(), 1, "Should find only the real image file");
+        assert!(images[0].file_name().unwrap() == "real_image.jpg", "Should find the real image");
+        
+        // Test with cache to ensure broken symlink handling in cache operations
+        let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
+        let grid_size = 64;
+        let hashes = generate_hashes_with_cache(&images, grid_size, &cache)
+            .expect("Failed to generate hashes");
+        
+        // Should successfully process the real image
+        assert_eq!(hashes.len(), 1, "Should generate hash for the real image");
+        
+        // Test cleanup doesn't fail when files are missing
+        let deleted = cache.cleanup_missing_files().expect("Cleanup should not fail");
+        assert_eq!(deleted, 0, "No files should be deleted from in-memory cache");
     }
 }

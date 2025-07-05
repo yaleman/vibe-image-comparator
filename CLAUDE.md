@@ -19,14 +19,14 @@ A Rust command-line tool that finds duplicate images using perceptual hashing. T
 
 ### Hash Generation (`generate_hashes`)
 - Uses configurable grid size for Mean-based perceptual hashing
-- Default 16x16 grid, customizable via config file or CLI
+- Default 64x64 grid, customizable via config file or CLI
 - Rotation-invariant: generates hashes for all 4 rotations and selects the canonical one
 - Resistant to minor edits, format changes, and rotations
 - Gracefully handles unreadable images with warnings
 
 ### Duplicate Detection (`find_duplicates`)
 - Compares hash distances using Hamming distance
-- Configurable similarity threshold (default: 5)
+- Configurable similarity threshold (default: 15)
 - Groups similar images into duplicate sets
 - Uses efficient processing to avoid redundant comparisons
 
@@ -37,7 +37,7 @@ Example config file:
 ```json
 {
   "grid_size": 64,
-  "threshold": 8,
+  "threshold": 15,
   "database_path": "/custom/path/to/cache.db"
 }
 ```
@@ -71,6 +71,9 @@ just run /path/to/images --threshold 10 --grid-size 64
 - `just check` - Run both lint and test (required before completion)
 - `just build` - Build release version
 
+## Development Practices
+- Use cargo commands instead of editing Cargo.toml directly
+
 ## Caching System
 The tool includes a SQLite-based caching system to speed up repeated scans:
 - **Normalized schema**: Separate tables for files and perceptual hashes to reduce data duplication
@@ -92,7 +95,7 @@ The tool includes a SQLite-based caching system to speed up repeated scans:
 
 ## Hash Algorithm Details
 The tool uses a rotation-invariant Mean-based perceptual hash that:
-- Resizes images to configurable grid size (default 16x16)
+- Resizes images to configurable grid size (default 64x64)
 - Generates hashes for original and all 3 rotations (90°, 180°, 270°)
 - Selects the lexicographically smallest hash for rotation invariance
 - Computes mean pixel values to capture overall image characteristics
