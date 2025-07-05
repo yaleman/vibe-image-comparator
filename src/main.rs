@@ -306,6 +306,9 @@ struct Args {
     
     #[arg(long, help = "Clean up cache entries for missing files")]
     clean_cache: bool,
+    
+    #[arg(short = '.', help = "Include hidden directories (starting with .)")]
+    include_hidden: bool,
 }
 
 fn main() -> Result<()> {
@@ -347,7 +350,7 @@ fn main() -> Result<()> {
     }
     
     println!("Scanning paths for images...");
-    let images = scan_for_images(&args.paths)?;
+    let images = scan_for_images(&args.paths, args.include_hidden)?;
     
     println!("Found {} images", images.len());
     println!("Generating perceptual hashes...");
@@ -392,7 +395,7 @@ fn load_config() -> Result<Config> {
     }
 }
 
-fn scan_for_images(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+fn scan_for_images(paths: &[PathBuf], include_hidden: bool) -> Result<Vec<PathBuf>> {
     let mut images = Vec::new();
     let image_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"];
     
@@ -409,7 +412,27 @@ fn scan_for_images(paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
                 eprintln!("Warning: Skipping inaccessible file: {}", path.display());
             }
         } else if path.is_dir() {
-            for entry in WalkDir::new(path).follow_links(true) {
+            let walker = WalkDir::new(path).follow_links(true).into_iter()
+                .filter_entry(|e| {
+                    if include_hidden {
+                        true
+                    } else {
+                        // Allow the root path, skip hidden directories (starting with .)
+                        if e.depth() == 0 {
+                            true
+                        } else if e.file_type().is_dir() {
+                            if let Some(file_name) = e.file_name().to_str() {
+                                !file_name.starts_with('.')
+                            } else {
+                                true
+                            }
+                        } else {
+                            true
+                        }
+                    }
+                });
+            
+            for entry in walker {
                 match entry {
                     Ok(entry) => {
                         let path = entry.path();
@@ -642,7 +665,7 @@ mod tests {
         }
 
         let paths = vec![test_dir.to_path_buf()];
-        let images = scan_for_images(&paths).expect("Failed to scan for images");
+        let images = scan_for_images(&paths, false).expect("Failed to scan for images");
         
         assert_eq!(images.len(), 3, "Should find exactly 3 images in test_images/all_same");
         
@@ -686,7 +709,7 @@ mod tests {
         }
 
         let paths = vec![test_dir.to_path_buf()];
-        let images = scan_for_images(&paths).expect("Failed to scan for images");
+        let images = scan_for_images(&paths, false).expect("Failed to scan for images");
         
         let extensions: std::collections::HashSet<_> = images
             .iter()
@@ -707,7 +730,7 @@ mod tests {
         }
 
         let paths = vec![test_dir.to_path_buf()];
-        let images = scan_for_images(&paths).expect("Failed to scan for images");
+        let images = scan_for_images(&paths, false).expect("Failed to scan for images");
         
         assert_eq!(images.len(), 2, "Should find exactly 2 images in test_images/rotated");
         
@@ -758,7 +781,7 @@ mod tests {
         
         // Test scanning with broken symlink
         let paths = vec![temp_path.to_path_buf()];
-        let images = scan_for_images(&paths).expect("Failed to scan for images");
+        let images = scan_for_images(&paths, false).expect("Failed to scan for images");
         
         // Should only find the real image, broken symlink should be skipped
         assert_eq!(images.len(), 1, "Should find only the real image file");
@@ -776,5 +799,54 @@ mod tests {
         // Test cleanup doesn't fail when files are missing
         let deleted = cache.cleanup_missing_files().expect("Cleanup should not fail");
         assert_eq!(deleted, 0, "No files should be deleted from in-memory cache");
+    }
+
+    #[test]
+    fn test_hidden_directory_filtering() {
+        // Create a temporary directory
+        let temp_dir = TempDir::new().expect("Failed to create temp directory");
+        let temp_path = temp_dir.path();
+        
+        // Create a regular directory with an image
+        let regular_dir = temp_path.join("regular");
+        fs::create_dir_all(&regular_dir).expect("Failed to create regular directory");
+        let regular_image = regular_dir.join("image.jpg");
+        fs::copy("test_images/all_same/dallepig.jpg", &regular_image)
+            .expect("Failed to copy test image to regular directory");
+        
+        // Create a hidden directory with an image
+        let hidden_dir = temp_path.join(".hidden");
+        fs::create_dir_all(&hidden_dir).expect("Failed to create hidden directory");
+        let hidden_image = hidden_dir.join("hidden_image.jpg");
+        fs::copy("test_images/all_same/dallepig.jpg", &hidden_image)
+            .expect("Failed to copy test image to hidden directory");
+        
+        // Test scanning without include_hidden (default behavior)
+        let paths = vec![temp_path.to_path_buf()];
+        let images_without_hidden = scan_for_images(&paths, false).expect("Failed to scan without hidden");
+        
+        // Should only find the image in the regular directory
+        assert_eq!(images_without_hidden.len(), 1, "Should find only 1 image when hidden directories are excluded");
+        assert!(images_without_hidden[0].to_string_lossy().contains("regular"), "Should find image in regular directory");
+        
+        // Test scanning with include_hidden enabled
+        let images_with_hidden = scan_for_images(&paths, true).expect("Failed to scan with hidden");
+        
+        // Should find both images
+        assert_eq!(images_with_hidden.len(), 2, "Should find 2 images when hidden directories are included");
+        
+        let mut found_regular = false;
+        let mut found_hidden = false;
+        for image_path in &images_with_hidden {
+            if image_path.to_string_lossy().contains("regular") {
+                found_regular = true;
+            }
+            if image_path.to_string_lossy().contains(".hidden") {
+                found_hidden = true;
+            }
+        }
+        
+        assert!(found_regular, "Should find image in regular directory");
+        assert!(found_hidden, "Should find image in hidden directory when include_hidden is true");
     }
 }

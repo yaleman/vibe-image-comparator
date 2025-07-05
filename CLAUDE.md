@@ -16,6 +16,7 @@ A Rust command-line tool that finds duplicate images using perceptual hashing. T
 - Recursively scans directories for image files
 - Supports common image formats: jpg, jpeg, png, gif, bmp, tiff, tif, webp
 - Follows symbolic links during traversal
+- **Hidden directory filtering**: Skips directories starting with `.` by default (use `-. ` flag to include them)
 
 ### Hash Generation (`generate_hashes`)
 - Uses configurable grid size for Mean-based perceptual hashing
@@ -56,6 +57,9 @@ cargo run -- /path/to/images
 
 # Scan with custom threshold and grid size
 cargo run -- /path/to/images --threshold 3 --grid-size 32
+
+# Include hidden directories (starting with .)
+cargo run -- /path/to/images -.
 
 # Disable caching for one-time scans
 cargo run -- /path/to/images --no-cache
