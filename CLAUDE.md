@@ -89,6 +89,7 @@ The tool includes a SQLite-based caching system to speed up repeated scans:
 - **Test isolation**: Tests use in-memory databases to avoid side effects
 - **Configurable location**: Default `~/.cache/vibe-image-comparator/hashes.db` or custom path via config
 - **Performance**: Significantly faster on repeat scans (cache hits vs. misses shown)
+- **Optimized processing**: Files with valid cache entries skip image loading and hash generation entirely
 - **Maintenance**: Use `--no-cache` to disable or `--clean-cache` to remove stale entries
 
 ## Dependencies
@@ -111,3 +112,7 @@ The tool uses a rotation-invariant Mean-based perceptual hash that:
 - Higher grid sizes = more precision but larger hashes and longer processing
 - Lower threshold values = more strict matching
 - Higher threshold values = more lenient matching
+
+## TODOs
+- TODO: handle ctrl-c shutdown gracefully
+- TODO: separate simple web interface for reviewing and comparing matches
