@@ -80,6 +80,7 @@ just run /path/to/images --threshold 10 --grid-size 64
 ## Development Practices
 - Use cargo commands instead of editing Cargo.toml directly
 - Commit changes when a task is done
+- **Warning**: Never run cargo doc with the '--open' flag
 
 ## Caching System
 The tool includes a SQLite-based caching system to speed up repeated scans:

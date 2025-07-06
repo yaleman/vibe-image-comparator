@@ -3,7 +3,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use img_hash::{HasherConfig, HashAlg};
+use imghash::{ImageHash, perceptual::PerceptualHasher, ImageHasher};
 use rayon::prelude::*;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
@@ -473,7 +473,7 @@ fn scan_for_images(paths: &[PathBuf], include_hidden: bool, debug: bool) -> Resu
     Ok(images)
 }
 
-fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCache, debug: bool) -> Result<Vec<(PathBuf, img_hash::ImageHash)>> {
+fn generate_hashes_with_cache(images: &[PathBuf], _grid_size: u32, cache: &HashCache, debug: bool) -> Result<Vec<(PathBuf, ImageHash)>> {
     // First, collect metadata for all images in parallel
     let metadata_results: Vec<_> = images.par_iter().map(|image_path| {
         match get_file_metadata(image_path) {
@@ -495,16 +495,27 @@ fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCa
     for metadata_result in metadata_results {
         if let Some((image_path, size, sha256)) = metadata_result {
             if let Ok(Some(cached_hash_bytes)) = cache.get_cached_hash(&image_path, size, &sha256) {
-                match img_hash::ImageHash::from_bytes(&cached_hash_bytes) {
-                    Ok(hash) => {
-                        if debug {
-                            println!("Cache hit: {}", image_path.display());
+                match String::from_utf8(cached_hash_bytes) {
+                    Ok(hash_string) => {
+                        // For imghash, we need to decode the string back to ImageHash
+                        // We'll store the encoded string in cache and decode on retrieval
+                        match ImageHash::decode(&hash_string, 8, 8) {
+                            Ok(hash) => {
+                                if debug {
+                                    println!("Cache hit: {}", image_path.display());
+                                }
+                                hashes.push((image_path, hash));
+                                cache_hits += 1;
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: Invalid cached hash format for {}: {}", image_path.display(), e);
+                                // Need to reprocess this file
+                                files_to_process.push((image_path, size, sha256));
+                            }
                         }
-                        hashes.push((image_path, hash));
-                        cache_hits += 1;
                     }
                     Err(e) => {
-                        eprintln!("Warning: Invalid cached hash for {}: {:?}", image_path.display(), e);
+                        eprintln!("Warning: Invalid cached hash encoding for {}: {:?}", image_path.display(), e);
                         // Need to reprocess this file
                         files_to_process.push((image_path, size, sha256));
                     }
@@ -518,10 +529,7 @@ fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCa
     
     // Only create hasher if we have files to process
     if !files_to_process.is_empty() {
-        let hasher = HasherConfig::new()
-            .hash_size(grid_size, grid_size)
-            .hash_alg(HashAlg::Mean)
-            .to_hasher();
+        let hasher = PerceptualHasher::default();
         
         // Second pass: process only files that need hashing
         for (image_path, size, sha256) in files_to_process {
@@ -536,7 +544,7 @@ fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCa
                                 path: image_path.clone(),
                                 size,
                                 sha256,
-                                perceptual_hash: hash.as_bytes().to_vec(),
+                                perceptual_hash: hash.encode().into_bytes(),
                             };
                             
                             if let Err(e) = cache.store_hash(&metadata) {
@@ -573,36 +581,27 @@ fn generate_hashes_with_cache(images: &[PathBuf], grid_size: u32, cache: &HashCa
     Ok(hashes)
 }
 
-fn generate_hashes(images: &[PathBuf], grid_size: u32, debug: bool) -> Result<Vec<(PathBuf, img_hash::ImageHash)>> {
-    let hasher = HasherConfig::new()
-        .hash_size(grid_size, grid_size)
-        .hash_alg(HashAlg::Mean)
-        .to_hasher();
+fn generate_hashes(images: &[PathBuf], _grid_size: u32, debug: bool) -> Result<Vec<(PathBuf, ImageHash)>> {
+    let mut hashes = Vec::new();
+    let hasher = PerceptualHasher::default();
     
-    // Load images in parallel, then hash sequentially due to hasher constraints
-    let image_results: Vec<_> = images.par_iter().map(|image_path| {
+    for image_path in images {
+        if debug {
+            println!("Processing: {}", image_path.display());
+        }
         match image::open(image_path) {
-            Ok(img) => Some((image_path.clone(), img)),
+            Ok(img) => {
+                match generate_rotation_invariant_hash_safe(&hasher, &img) {
+                    Ok(hash) => {
+                        hashes.push((image_path.clone(), hash));
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Could not generate hash for {}: {}", image_path.display(), e);
+                    }
+                }
+            }
             Err(e) => {
                 eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
-                None
-            }
-        }
-    }).collect();
-    
-    let mut hashes = Vec::new();
-    for image_result in image_results {
-        if let Some((image_path, img)) = image_result {
-            if debug {
-                println!("Processing: {}", image_path.display());
-            }
-            match generate_rotation_invariant_hash_safe(&hasher, &img) {
-                Ok(hash) => {
-                    hashes.push((image_path, hash));
-                }
-                Err(e) => {
-                    eprintln!("Warning: Could not generate hash for {}: {}", image_path.display(), e);
-                }
             }
         }
     }
@@ -610,29 +609,30 @@ fn generate_hashes(images: &[PathBuf], grid_size: u32, debug: bool) -> Result<Ve
     Ok(hashes)
 }
 
-fn generate_rotation_invariant_hash_safe(hasher: &img_hash::Hasher<Box<[u8]>>, img: &image::DynamicImage) -> Result<img_hash::ImageHash<Box<[u8]>>> {
-    let original_hash = hasher.hash_image(img);
+fn generate_rotation_invariant_hash_safe(hasher: &PerceptualHasher, img: &image::DynamicImage) -> Result<ImageHash> {
+    let original_hash = hasher.hash_from_img(img);
     let rotated_90 = img.rotate90();
-    let rotated_90_hash = hasher.hash_image(&rotated_90);
+    let rotated_90_hash = hasher.hash_from_img(&rotated_90);
     let rotated_180 = img.rotate180();
-    let rotated_180_hash = hasher.hash_image(&rotated_180);
+    let rotated_180_hash = hasher.hash_from_img(&rotated_180);
     let rotated_270 = img.rotate270();
-    let rotated_270_hash = hasher.hash_image(&rotated_270);
+    let rotated_270_hash = hasher.hash_from_img(&rotated_270);
     
     let mut candidates = vec![
-        (original_hash.as_bytes().to_vec(), original_hash),
-        (rotated_90_hash.as_bytes().to_vec(), rotated_90_hash),
-        (rotated_180_hash.as_bytes().to_vec(), rotated_180_hash),
-        (rotated_270_hash.as_bytes().to_vec(), rotated_270_hash),
+        (original_hash.encode(), original_hash),
+        (rotated_90_hash.encode(), rotated_90_hash),
+        (rotated_180_hash.encode(), rotated_180_hash),
+        (rotated_270_hash.encode(), rotated_270_hash),
     ];
     
-    candidates.sort_by_key(|(bytes, _)| bytes.clone());
+    candidates.sort_by_key(|(encoded, _)| encoded.clone());
     candidates.into_iter().next()
         .map(|(_, hash)| hash)
         .ok_or_else(|| anyhow::anyhow!("No rotation candidate hashes generated"))
 }
 
-fn find_duplicates(hashes: &[(PathBuf, img_hash::ImageHash)], threshold: u32) -> Vec<Vec<PathBuf>> {
+
+fn find_duplicates(hashes: &[(PathBuf, ImageHash)], threshold: u32) -> Vec<Vec<PathBuf>> {
     let mut groups: Vec<Vec<PathBuf>> = Vec::new();
     let mut processed = vec![false; hashes.len()];
     
@@ -651,11 +651,15 @@ fn find_duplicates(hashes: &[(PathBuf, img_hash::ImageHash)], threshold: u32) ->
         
         let matches: Vec<_> = remaining_hashes.par_iter()
             .filter_map(|(j, (path2, hash2))| {
-                let distance = hash1.dist(hash2);
-                if distance <= threshold {
-                    Some((*j, path2.clone()))
-                } else {
-                    None
+                match hash1.distance(hash2) {
+                    Ok(distance) => {
+                        if distance <= threshold as usize {
+                            Some((*j, path2.clone()))
+                        } else {
+                            None
+                        }
+                    }
+                    Err(_) => None,
                 }
             })
             .collect();
@@ -901,7 +905,7 @@ mod tests {
         // Verify hashes are identical (cache optimization preserves correctness)
         for i in 0..3 {
             assert_eq!(hashes1[i].0, hashes2[i].0, "Paths should match");
-            assert_eq!(hashes1[i].1.as_bytes(), hashes2[i].1.as_bytes(), "Hash bytes should be identical");
+            assert_eq!(hashes1[i].1.encode(), hashes2[i].1.encode(), "Hash strings should be identical");
         }
         
         // The optimization should avoid file processing entirely on the second run
