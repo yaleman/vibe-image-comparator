@@ -3,11 +3,11 @@
 
 use anyhow::Result;
 use clap::Parser;
-use imghash::{ImageHash, perceptual::PerceptualHasher, ImageHasher};
+use imghash::{perceptual::PerceptualHasher, ImageHash, ImageHasher};
 use rayon::prelude::*;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
@@ -39,25 +39,25 @@ impl HashCache {
             let cache_dir = dirs::cache_dir()
                 .unwrap_or_else(|| PathBuf::from("."))
                 .join("vibe-image-comparator");
-            
+
             fs::create_dir_all(&cache_dir)?;
             let db_path = cache_dir.join("hashes.db");
             Connection::open(db_path)?
         };
-        
+
         Self::create_tables(&conn)?;
         Self::migrate_old_schema(&conn)?;
-        
+
         Ok(HashCache { conn })
     }
-    
+
     #[cfg(test)]
     fn new_in_memory() -> Result<Self> {
         let conn = Connection::open(":memory:")?;
         Self::create_tables(&conn)?;
         Ok(HashCache { conn })
     }
-    
+
     fn create_tables(conn: &Connection) -> Result<()> {
         // Create perceptual_hashes table first (referenced table)
         conn.execute(
@@ -69,7 +69,7 @@ impl HashCache {
             )",
             [],
         )?;
-        
+
         // Create files table with foreign key reference
         conn.execute(
             "CREATE TABLE IF NOT EXISTS files (
@@ -82,36 +82,36 @@ impl HashCache {
             )",
             [],
         )?;
-        
+
         // Enable foreign key constraints
         conn.execute("PRAGMA foreign_keys = ON", [])?;
-        
+
         Ok(())
     }
-    
+
     fn migrate_old_schema(conn: &Connection) -> Result<()> {
         // Check if old table exists
-        let mut stmt = conn.prepare(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='file_hashes'"
-        )?;
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='file_hashes'")?;
         let old_table_exists = stmt.exists([])?;
-        
+
         if old_table_exists {
             println!("Migrating existing cache data to normalized schema...");
-            
+
             // Read all data from old table
-            let mut stmt = conn.prepare(
-                "SELECT path, size, sha256, perceptual_hash FROM file_hashes"
-            )?;
-            let old_data: Vec<(String, i64, String, Vec<u8>)> = stmt.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, String>(2)?,
-                    row.get::<_, Vec<u8>>(3)?,
-                ))
-            })?.collect::<Result<Vec<_>, _>>()?;
-            
+            let mut stmt =
+                conn.prepare("SELECT path, size, sha256, perceptual_hash FROM file_hashes")?;
+            let old_data: Vec<(String, i64, String, Vec<u8>)> = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
             // Insert into new normalized tables
             for (path, size, sha256, perceptual_hash) in old_data {
                 // Insert or get perceptual hash ID
@@ -119,60 +119,60 @@ impl HashCache {
                     "INSERT OR IGNORE INTO perceptual_hashes (sha256, perceptual_hash) VALUES (?1, ?2)",
                     params![sha256, perceptual_hash],
                 )?;
-                
+
                 let perceptual_hash_id: i64 = conn.query_row(
                     "SELECT id FROM perceptual_hashes WHERE sha256 = ?1",
                     params![sha256],
                     |row| row.get(0),
                 )?;
-                
+
                 // Insert file record
                 conn.execute(
                     "INSERT OR IGNORE INTO files (path, size, perceptual_hash_id) VALUES (?1, ?2, ?3)",
                     params![path, size, perceptual_hash_id],
                 )?;
             }
-            
+
             // Drop old table
             conn.execute("DROP TABLE file_hashes", [])?;
             println!("Migration completed successfully");
         }
-        
+
         Ok(())
     }
-    
+
     fn get_cached_hash(&self, path: &Path, size: u64, sha256: &str) -> Result<Option<Vec<u8>>> {
         let mut stmt = self.conn.prepare(
             "SELECT ph.perceptual_hash 
              FROM files f 
              JOIN perceptual_hashes ph ON f.perceptual_hash_id = ph.id 
-             WHERE f.path = ?1 AND f.size = ?2 AND ph.sha256 = ?3"
+             WHERE f.path = ?1 AND f.size = ?2 AND ph.sha256 = ?3",
         )?;
-        
+
         let mut rows = stmt.query_map(params![path.to_string_lossy(), size, sha256], |row| {
             row.get::<_, Vec<u8>>(0)
         })?;
-        
+
         if let Some(row) = rows.next() {
             Ok(Some(row?))
         } else {
             Ok(None)
         }
     }
-    
+
     fn store_hash(&self, metadata: &FileMetadata) -> Result<()> {
         // Insert or get perceptual hash ID
         self.conn.execute(
             "INSERT OR IGNORE INTO perceptual_hashes (sha256, perceptual_hash) VALUES (?1, ?2)",
             params![metadata.sha256, metadata.perceptual_hash],
         )?;
-        
+
         let perceptual_hash_id: i64 = self.conn.query_row(
             "SELECT id FROM perceptual_hashes WHERE sha256 = ?1",
             params![metadata.sha256],
             |row| row.get(0),
         )?;
-        
+
         // Insert or replace file record
         self.conn.execute(
             "INSERT OR REPLACE INTO files (path, size, perceptual_hash_id) VALUES (?1, ?2, ?3)",
@@ -182,85 +182,89 @@ impl HashCache {
                 perceptual_hash_id
             ],
         )?;
-        
+
         Ok(())
     }
-    
+
     fn cleanup_missing_files(&self) -> Result<usize> {
         let mut stmt = self.conn.prepare("SELECT path FROM files")?;
-        let paths: Vec<String> = stmt.query_map([], |row| {
-            row.get::<_, String>(0)
-        })?.collect::<Result<Vec<_>, _>>()?;
-        
+        let paths: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+
         let mut deleted = 0;
         for path_str in paths {
             let path = PathBuf::from(&path_str);
             if !path.exists() {
-                self.conn.execute("DELETE FROM files WHERE path = ?1", params![path_str])?;
+                self.conn
+                    .execute("DELETE FROM files WHERE path = ?1", params![path_str])?;
                 deleted += 1;
             }
         }
-        
+
         // Clean up orphaned perceptual hashes (not referenced by any files)
         let orphaned = self.conn.execute(
             "DELETE FROM perceptual_hashes 
              WHERE id NOT IN (SELECT DISTINCT perceptual_hash_id FROM files)",
             [],
         )?;
-        
+
         if orphaned > 0 {
             println!("Cleaned up {orphaned} orphaned perceptual hashes");
         }
-        
+
         Ok(deleted)
     }
-    
+
     fn remove_file_entry(&self, path: &Path) -> Result<()> {
         self.conn.execute(
             "DELETE FROM files WHERE path = ?1",
             params![path.to_string_lossy()],
         )?;
-        
+
         // Clean up orphaned perceptual hashes after removing the file
         let orphaned = self.conn.execute(
             "DELETE FROM perceptual_hashes 
              WHERE id NOT IN (SELECT DISTINCT perceptual_hash_id FROM files)",
             [],
         )?;
-        
+
         if orphaned > 0 {
-            eprintln!("Cleaned up {orphaned} orphaned perceptual hashes after removing broken file");
+            eprintln!(
+                "Cleaned up {orphaned} orphaned perceptual hashes after removing broken file"
+            );
         }
-        
+
         Ok(())
     }
-    
+
     #[allow(dead_code)]
     fn debug_tables(&self) -> Result<()> {
         println!("\n=== Database Debug Info ===");
-        
+
         // Count files
-        let file_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM files",
-            [],
-            |row| row.get(0),
-        )?;
+        let file_count: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM files", [], |row| row.get(0))?;
         println!("Files table: {file_count} entries");
-        
+
         // Count perceptual hashes
-        let hash_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM perceptual_hashes",
-            [],
-            |row| row.get(0),
-        )?;
+        let hash_count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM perceptual_hashes", [], |row| {
+                    row.get(0)
+                })?;
         println!("Perceptual hashes table: {hash_count} entries");
-        
+
         // Show deduplication ratio
         if file_count > 0 && hash_count > 0 {
             let ratio = hash_count as f64 / file_count as f64;
-            println!("Deduplication ratio: {:.2} (lower = more deduplication)", ratio);
+            println!(
+                "Deduplication ratio: {:.2} (lower = more deduplication)",
+                ratio
+            );
         }
-        
+
         println!("=== End Debug Info ===\n");
         Ok(())
     }
@@ -297,37 +301,45 @@ impl Default for Config {
 struct Args {
     #[arg(help = "Paths to scan for images")]
     paths: Vec<PathBuf>,
-    
-    #[arg(short, long, help = "Minimum similarity threshold (0-64, lower = more similar)")]
+
+    #[arg(
+        short,
+        long,
+        help = "Minimum similarity threshold (0-64, lower = more similar)"
+    )]
     threshold: Option<u32>,
-    
+
     #[arg(short, long, help = "Hash grid size (e.g., 64 for 64x64 grid)")]
     grid_size: Option<u32>,
-    
+
     #[arg(long, help = "Disable hash caching")]
     no_cache: bool,
-    
+
     #[arg(long, help = "Clean up cache entries for missing files")]
     clean_cache: bool,
-    
+
     #[arg(short = '.', help = "Include hidden directories (starting with .)")]
     include_hidden: bool,
-    
-    #[arg(short, long, help = "Print debug information including filenames as they're processed")]
+
+    #[arg(
+        short,
+        long,
+        help = "Print debug information including filenames as they're processed"
+    )]
     debug: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    
+
     let config = load_config()?;
-    
+
     let cache = if !args.no_cache {
         Some(HashCache::new(config.database_path.as_deref())?)
     } else {
         None
     };
-    
+
     if args.clean_cache {
         if let Some(ref cache) = cache {
             let deleted = cache.cleanup_missing_files()?;
@@ -339,37 +351,37 @@ fn main() -> Result<()> {
             return Ok(());
         }
     }
-    
+
     if args.paths.is_empty() {
         eprintln!("Error: Please provide at least one path to scan");
         std::process::exit(1);
     }
-    
+
     let threshold = args.threshold.unwrap_or(config.threshold);
     let grid_size = args.grid_size.unwrap_or(config.grid_size);
-    
+
     println!("Using grid size: {grid_size}x{grid_size}, threshold: {threshold}");
     if cache.is_some() {
         println!("Hash caching enabled");
     } else {
         println!("Hash caching disabled");
     }
-    
+
     println!("Scanning paths for images...");
     let images = scan_for_images(&args.paths, args.include_hidden, args.debug)?;
-    
+
     println!("Found {} images", images.len());
     println!("Generating perceptual hashes...");
-    
+
     let hashes = if let Some(ref cache) = cache {
         generate_hashes_with_cache(&images, grid_size, cache, args.debug)?
     } else {
         generate_hashes(&images, grid_size, args.debug)?
     };
-    
+
     println!("Finding duplicate sets...");
     let duplicates = find_duplicates(&hashes, threshold);
-    
+
     if duplicates.is_empty() {
         println!("No duplicate images found");
     } else {
@@ -381,16 +393,16 @@ fn main() -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
 fn load_config() -> Result<Config> {
-    let config_dir = dirs::config_dir()
-        .ok_or_else(|| anyhow::anyhow!("Could not find config directory"))?;
-    
+    let config_dir =
+        dirs::config_dir().ok_or_else(|| anyhow::anyhow!("Could not find config directory"))?;
+
     let config_path = config_dir.join("vibe-image-comparator.json");
-    
+
     if config_path.exists() {
         let config_str = std::fs::read_to_string(&config_path)?;
         let config: Config = serde_json::from_str(&config_str)?;
@@ -404,7 +416,7 @@ fn load_config() -> Result<Config> {
 fn scan_for_images(paths: &[PathBuf], include_hidden: bool, debug: bool) -> Result<Vec<PathBuf>> {
     let mut images = Vec::new();
     let image_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"];
-    
+
     for path in paths {
         if path.is_file() {
             // Check if file is accessible (handles broken symlinks)
@@ -421,7 +433,9 @@ fn scan_for_images(paths: &[PathBuf], include_hidden: bool, debug: bool) -> Resu
                 eprintln!("Warning: Skipping inaccessible file: {}", path.display());
             }
         } else if path.is_dir() {
-            let walker = WalkDir::new(path).follow_links(true).into_iter()
+            let walker = WalkDir::new(path)
+                .follow_links(true)
+                .into_iter()
                 .filter_entry(|e| {
                     if include_hidden {
                         true
@@ -440,17 +454,19 @@ fn scan_for_images(paths: &[PathBuf], include_hidden: bool, debug: bool) -> Resu
                         }
                     }
                 });
-            
+
             for entry in walker {
                 match entry {
                     Ok(entry) => {
                         let path = entry.path();
-                        
+
                         if path.is_file() {
                             // Check if file is accessible (handles broken symlinks)
                             if path.exists() && fs::metadata(path).is_ok() {
                                 if let Some(ext) = path.extension() {
-                                    if image_extensions.contains(&ext.to_string_lossy().to_lowercase().as_str()) {
+                                    if image_extensions
+                                        .contains(&ext.to_string_lossy().to_lowercase().as_str())
+                                    {
                                         if debug {
                                             println!("Found image: {}", path.display());
                                         }
@@ -458,7 +474,10 @@ fn scan_for_images(paths: &[PathBuf], include_hidden: bool, debug: bool) -> Resu
                                     }
                                 }
                             } else {
-                                eprintln!("Warning: Skipping inaccessible file: {}", path.display());
+                                eprintln!(
+                                    "Warning: Skipping inaccessible file: {}",
+                                    path.display()
+                                );
                             }
                         }
                     }
@@ -469,28 +488,38 @@ fn scan_for_images(paths: &[PathBuf], include_hidden: bool, debug: bool) -> Resu
             }
         }
     }
-    
+
     Ok(images)
 }
 
-fn generate_hashes_with_cache(images: &[PathBuf], _grid_size: u32, cache: &HashCache, debug: bool) -> Result<Vec<(PathBuf, ImageHash)>> {
+fn generate_hashes_with_cache(
+    images: &[PathBuf],
+    _grid_size: u32,
+    cache: &HashCache,
+    debug: bool,
+) -> Result<Vec<(PathBuf, ImageHash)>> {
     // First, collect metadata for all images in parallel
-    let metadata_results: Vec<_> = images.par_iter().map(|image_path| {
-        match get_file_metadata(image_path) {
+    let metadata_results: Vec<_> = images
+        .par_iter()
+        .map(|image_path| match get_file_metadata(image_path) {
             Ok((size, sha256)) => Some((image_path.clone(), size, sha256)),
             Err(e) => {
-                eprintln!("Warning: Could not get metadata for {} (possibly broken symlink): {}", image_path.display(), e);
+                eprintln!(
+                    "Warning: Could not get metadata for {} (possibly broken symlink): {}",
+                    image_path.display(),
+                    e
+                );
                 None
             }
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     // Separate cache hits from cache misses (sequential due to SQLite constraints)
     let mut hashes = Vec::new();
     let mut cache_hits = 0;
     let mut cache_misses = 0;
     let mut files_to_process = Vec::new();
-    
+
     // First pass: check cache and collect cache hits
     for metadata_result in metadata_results {
         if let Some((image_path, size, sha256)) = metadata_result {
@@ -508,14 +537,22 @@ fn generate_hashes_with_cache(images: &[PathBuf], _grid_size: u32, cache: &HashC
                                 cache_hits += 1;
                             }
                             Err(e) => {
-                                eprintln!("Warning: Invalid cached hash format for {}: {}", image_path.display(), e);
+                                eprintln!(
+                                    "Warning: Invalid cached hash format for {}: {}",
+                                    image_path.display(),
+                                    e
+                                );
                                 // Need to reprocess this file
                                 files_to_process.push((image_path, size, sha256));
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("Warning: Invalid cached hash encoding for {}: {:?}", image_path.display(), e);
+                        eprintln!(
+                            "Warning: Invalid cached hash encoding for {}: {:?}",
+                            image_path.display(),
+                            e
+                        );
                         // Need to reprocess this file
                         files_to_process.push((image_path, size, sha256));
                     }
@@ -526,11 +563,11 @@ fn generate_hashes_with_cache(images: &[PathBuf], _grid_size: u32, cache: &HashC
             }
         }
     }
-    
+
     // Only create hasher if we have files to process
     if !files_to_process.is_empty() {
         let hasher = PerceptualHasher::default();
-        
+
         // Second pass: process only files that need hashing
         for (image_path, size, sha256) in files_to_process {
             if debug {
@@ -546,19 +583,30 @@ fn generate_hashes_with_cache(images: &[PathBuf], _grid_size: u32, cache: &HashC
                                 sha256,
                                 perceptual_hash: hash.encode().into_bytes(),
                             };
-                            
+
                             if let Err(e) = cache.store_hash(&metadata) {
-                                eprintln!("Warning: Could not cache hash for {}: {}", image_path.display(), e);
+                                eprintln!(
+                                    "Warning: Could not cache hash for {}: {}",
+                                    image_path.display(),
+                                    e
+                                );
                             }
-                            
+
                             hashes.push((image_path, hash));
                             cache_misses += 1;
                         }
                         Err(e) => {
-                            eprintln!("Warning: Could not generate hash for {}: {}", image_path.display(), e);
+                            eprintln!(
+                                "Warning: Could not generate hash for {}: {}",
+                                image_path.display(),
+                                e
+                            );
                             // Remove broken file from cache if it exists
                             if let Err(cache_err) = cache.remove_file_entry(&image_path) {
-                                eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
+                                eprintln!(
+                                    "Warning: Could not remove broken file from cache: {}",
+                                    cache_err
+                                );
                             }
                         }
                     }
@@ -567,49 +615,61 @@ fn generate_hashes_with_cache(images: &[PathBuf], _grid_size: u32, cache: &HashC
                     eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
                     // Remove broken file from cache if it exists
                     if let Err(cache_err) = cache.remove_file_entry(&image_path) {
-                        eprintln!("Warning: Could not remove broken file from cache: {}", cache_err);
+                        eprintln!(
+                            "Warning: Could not remove broken file from cache: {}",
+                            cache_err
+                        );
                     }
                 }
             }
         }
     }
-    
+
     if cache_hits > 0 || cache_misses > 0 {
         println!("Cache stats: {cache_hits} hits, {cache_misses} misses");
     }
-    
+
     Ok(hashes)
 }
 
-fn generate_hashes(images: &[PathBuf], _grid_size: u32, debug: bool) -> Result<Vec<(PathBuf, ImageHash)>> {
+fn generate_hashes(
+    images: &[PathBuf],
+    _grid_size: u32,
+    debug: bool,
+) -> Result<Vec<(PathBuf, ImageHash)>> {
     let mut hashes = Vec::new();
     let hasher = PerceptualHasher::default();
-    
+
     for image_path in images {
         if debug {
             println!("Processing: {}", image_path.display());
         }
         match image::open(image_path) {
-            Ok(img) => {
-                match generate_rotation_invariant_hash_safe(&hasher, &img) {
-                    Ok(hash) => {
-                        hashes.push((image_path.clone(), hash));
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Could not generate hash for {}: {}", image_path.display(), e);
-                    }
+            Ok(img) => match generate_rotation_invariant_hash_safe(&hasher, &img) {
+                Ok(hash) => {
+                    hashes.push((image_path.clone(), hash));
                 }
-            }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Could not generate hash for {}: {}",
+                        image_path.display(),
+                        e
+                    );
+                }
+            },
             Err(e) => {
                 eprintln!("Warning: Could not process {}: {}", image_path.display(), e);
             }
         }
     }
-    
+
     Ok(hashes)
 }
 
-fn generate_rotation_invariant_hash_safe(hasher: &PerceptualHasher, img: &image::DynamicImage) -> Result<ImageHash> {
+fn generate_rotation_invariant_hash_safe(
+    hasher: &PerceptualHasher,
+    img: &image::DynamicImage,
+) -> Result<ImageHash> {
     let original_hash = hasher.hash_from_img(img);
     let rotated_90 = img.rotate90();
     let rotated_90_hash = hasher.hash_from_img(&rotated_90);
@@ -617,66 +677,68 @@ fn generate_rotation_invariant_hash_safe(hasher: &PerceptualHasher, img: &image:
     let rotated_180_hash = hasher.hash_from_img(&rotated_180);
     let rotated_270 = img.rotate270();
     let rotated_270_hash = hasher.hash_from_img(&rotated_270);
-    
+
     let mut candidates = vec![
         (original_hash.encode(), original_hash),
         (rotated_90_hash.encode(), rotated_90_hash),
         (rotated_180_hash.encode(), rotated_180_hash),
         (rotated_270_hash.encode(), rotated_270_hash),
     ];
-    
+
     candidates.sort_by_key(|(encoded, _)| encoded.clone());
-    candidates.into_iter().next()
+    candidates
+        .into_iter()
+        .next()
         .map(|(_, hash)| hash)
         .ok_or_else(|| anyhow::anyhow!("No rotation candidate hashes generated"))
 }
 
-
 fn find_duplicates(hashes: &[(PathBuf, ImageHash)], threshold: u32) -> Vec<Vec<PathBuf>> {
     let mut groups: Vec<Vec<PathBuf>> = Vec::new();
     let mut processed = vec![false; hashes.len()];
-    
+
     for (i, (path1, hash1)) in hashes.iter().enumerate() {
         if processed[i] {
             continue;
         }
-        
+
         let mut group = vec![path1.clone()];
         processed[i] = true;
-        
+
         // Parallelize the distance computation for remaining hashes
-        let remaining_hashes: Vec<_> = hashes.iter().enumerate().skip(i + 1)
+        let remaining_hashes: Vec<_> = hashes
+            .iter()
+            .enumerate()
+            .skip(i + 1)
             .filter(|(j, _)| !processed[*j])
             .collect();
-        
-        let matches: Vec<_> = remaining_hashes.par_iter()
-            .filter_map(|(j, (path2, hash2))| {
-                match hash1.distance(hash2) {
-                    Ok(distance) => {
-                        if distance <= threshold as usize {
-                            Some((*j, path2.clone()))
-                        } else {
-                            None
-                        }
+
+        let matches: Vec<_> = remaining_hashes
+            .par_iter()
+            .filter_map(|(j, (path2, hash2))| match hash1.distance(hash2) {
+                Ok(distance) => {
+                    if distance <= threshold as usize {
+                        Some((*j, path2.clone()))
+                    } else {
+                        None
                     }
-                    Err(_) => None,
                 }
+                Err(_) => None,
             })
             .collect();
-        
+
         for (j, path2) in matches {
             group.push(path2);
             processed[j] = true;
         }
-        
+
         if group.len() > 1 {
             groups.push(group);
         }
     }
-    
+
     groups
 }
-
 
 #[cfg(test)]
 #[allow(clippy::expect_used)]
@@ -696,23 +758,34 @@ mod tests {
 
         let paths = vec![test_dir.to_path_buf()];
         let images = scan_for_images(&paths, false, false).expect("Failed to scan for images");
-        
-        assert_eq!(images.len(), 3, "Should find exactly 3 images in test_images/all_same");
-        
+
+        assert_eq!(
+            images.len(),
+            3,
+            "Should find exactly 3 images in test_images/all_same"
+        );
+
         // Test with in-memory cache
         let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
         let grid_size = 16;
-        let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false).expect("Failed to generate hashes");
-        
+        let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)
+            .expect("Failed to generate hashes");
+
         assert_eq!(hashes.len(), 3, "Should generate 3 hashes");
-        
+
         let threshold = 15;
         let duplicates = find_duplicates(&hashes, threshold);
-        
-        assert!(!duplicates.is_empty(), "Should find at least 1 duplicate group");
+
+        assert!(
+            !duplicates.is_empty(),
+            "Should find at least 1 duplicate group"
+        );
         let total_images_in_groups: usize = duplicates.iter().map(|g| g.len()).sum();
-        assert_eq!(total_images_in_groups, 3, "All 3 images should be in duplicate groups");
-        
+        assert_eq!(
+            total_images_in_groups, 3,
+            "All 3 images should be in duplicate groups"
+        );
+
         let mut found_extensions = std::collections::HashSet::new();
         for group in &duplicates {
             for path in group {
@@ -721,13 +794,14 @@ mod tests {
                 }
             }
         }
-        
+
         assert!(found_extensions.contains("jpg"), "Should find .jpg file");
         assert!(found_extensions.contains("png"), "Should find .png file");
         assert!(found_extensions.contains("webp"), "Should find .webp file");
-        
+
         // Test cache hit on second run
-        let hashes2 = generate_hashes_with_cache(&images, grid_size, &cache, false).expect("Failed to generate hashes second time");
+        let hashes2 = generate_hashes_with_cache(&images, grid_size, &cache, false)
+            .expect("Failed to generate hashes second time");
         assert_eq!(hashes2.len(), 3, "Should generate 3 hashes on cache hit");
     }
 
@@ -740,13 +814,13 @@ mod tests {
 
         let paths = vec![test_dir.to_path_buf()];
         let images = scan_for_images(&paths, false, false).expect("Failed to scan for images");
-        
+
         let extensions: std::collections::HashSet<_> = images
             .iter()
             .filter_map(|p| p.extension())
             .map(|ext| ext.to_string_lossy().to_lowercase())
             .collect();
-        
+
         assert!(extensions.contains("jpg") || extensions.contains("jpeg"));
         assert!(extensions.contains("png"));
         assert!(extensions.contains("webp"));
@@ -761,22 +835,33 @@ mod tests {
 
         let paths = vec![test_dir.to_path_buf()];
         let images = scan_for_images(&paths, false, false).expect("Failed to scan for images");
-        
-        assert_eq!(images.len(), 2, "Should find exactly 2 images in test_images/rotated");
-        
+
+        assert_eq!(
+            images.len(),
+            2,
+            "Should find exactly 2 images in test_images/rotated"
+        );
+
         // Test with in-memory cache
         let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
         let grid_size = 16;
-        let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false).expect("Failed to generate hashes");
-        
+        let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)
+            .expect("Failed to generate hashes");
+
         assert_eq!(hashes.len(), 2, "Should generate 2 hashes");
-        
+
         let threshold = 20;
         let duplicates = find_duplicates(&hashes, threshold);
-        
-        assert!(!duplicates.is_empty(), "Should find at least 1 duplicate group for rotated images");
+
+        assert!(
+            !duplicates.is_empty(),
+            "Should find at least 1 duplicate group for rotated images"
+        );
         let total_images_in_groups: usize = duplicates.iter().map(|g| g.len()).sum();
-        assert_eq!(total_images_in_groups, 2, "Both rotated images should be in duplicate groups");
+        assert_eq!(
+            total_images_in_groups, 2,
+            "Both rotated images should be in duplicate groups"
+        );
     }
 
     #[test]
@@ -784,12 +869,12 @@ mod tests {
         // Create a temporary directory
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let temp_path = temp_dir.path();
-        
+
         // Copy a real image to the temp directory
         let real_image_path = temp_path.join("real_image.jpg");
         fs::copy("test_images/all_same/dallepig.jpg", &real_image_path)
             .expect("Failed to copy test image");
-        
+
         // Create a broken symlink
         let broken_link_path = temp_path.join("broken_link.jpg");
         #[cfg(unix)]
@@ -802,33 +887,40 @@ mod tests {
             // On Windows, use a broken junction instead
             std::fs::write(&broken_link_path, b"not an image")
                 .expect("Failed to create broken file");
-            std::fs::remove_file(&broken_link_path)
-                .expect("Failed to remove temp file");
+            std::fs::remove_file(&broken_link_path).expect("Failed to remove temp file");
             // Create a symlink to a non-existent file
             std::os::windows::fs::symlink_file("C:\\nonexistent\\path.jpg", &broken_link_path)
                 .expect("Failed to create broken symlink");
         }
-        
+
         // Test scanning with broken symlink
         let paths = vec![temp_path.to_path_buf()];
         let images = scan_for_images(&paths, false, false).expect("Failed to scan for images");
-        
+
         // Should only find the real image, broken symlink should be skipped
         assert_eq!(images.len(), 1, "Should find only the real image file");
-        assert!(images[0].file_name().expect("File should have a name") == "real_image.jpg", "Should find the real image");
-        
+        assert!(
+            images[0].file_name().expect("File should have a name") == "real_image.jpg",
+            "Should find the real image"
+        );
+
         // Test with cache to ensure broken symlink handling in cache operations
         let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
         let grid_size = 64;
         let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)
             .expect("Failed to generate hashes");
-        
+
         // Should successfully process the real image
         assert_eq!(hashes.len(), 1, "Should generate hash for the real image");
-        
+
         // Test cleanup doesn't fail when files are missing
-        let deleted = cache.cleanup_missing_files().expect("Cleanup should not fail");
-        assert_eq!(deleted, 0, "No files should be deleted from in-memory cache");
+        let deleted = cache
+            .cleanup_missing_files()
+            .expect("Cleanup should not fail");
+        assert_eq!(
+            deleted, 0,
+            "No files should be deleted from in-memory cache"
+        );
     }
 
     #[test]
@@ -836,35 +928,50 @@ mod tests {
         // Create a temporary directory
         let temp_dir = TempDir::new().expect("Failed to create temp directory");
         let temp_path = temp_dir.path();
-        
+
         // Create a regular directory with an image
         let regular_dir = temp_path.join("regular");
         fs::create_dir_all(&regular_dir).expect("Failed to create regular directory");
         let regular_image = regular_dir.join("image.jpg");
         fs::copy("test_images/all_same/dallepig.jpg", &regular_image)
             .expect("Failed to copy test image to regular directory");
-        
+
         // Create a hidden directory with an image
         let hidden_dir = temp_path.join(".hidden");
         fs::create_dir_all(&hidden_dir).expect("Failed to create hidden directory");
         let hidden_image = hidden_dir.join("hidden_image.jpg");
         fs::copy("test_images/all_same/dallepig.jpg", &hidden_image)
             .expect("Failed to copy test image to hidden directory");
-        
+
         // Test scanning without include_hidden (default behavior)
         let paths = vec![temp_path.to_path_buf()];
-        let images_without_hidden = scan_for_images(&paths, false, false).expect("Failed to scan without hidden");
-        
+        let images_without_hidden =
+            scan_for_images(&paths, false, false).expect("Failed to scan without hidden");
+
         // Should only find the image in the regular directory
-        assert_eq!(images_without_hidden.len(), 1, "Should find only 1 image when hidden directories are excluded");
-        assert!(images_without_hidden[0].to_string_lossy().contains("regular"), "Should find image in regular directory");
-        
+        assert_eq!(
+            images_without_hidden.len(),
+            1,
+            "Should find only 1 image when hidden directories are excluded"
+        );
+        assert!(
+            images_without_hidden[0]
+                .to_string_lossy()
+                .contains("regular"),
+            "Should find image in regular directory"
+        );
+
         // Test scanning with include_hidden enabled
-        let images_with_hidden = scan_for_images(&paths, true, false).expect("Failed to scan with hidden");
-        
+        let images_with_hidden =
+            scan_for_images(&paths, true, false).expect("Failed to scan with hidden");
+
         // Should find both images
-        assert_eq!(images_with_hidden.len(), 2, "Should find 2 images when hidden directories are included");
-        
+        assert_eq!(
+            images_with_hidden.len(),
+            2,
+            "Should find 2 images when hidden directories are included"
+        );
+
         let mut found_regular = false;
         let mut found_hidden = false;
         for image_path in &images_with_hidden {
@@ -875,9 +982,12 @@ mod tests {
                 found_hidden = true;
             }
         }
-        
+
         assert!(found_regular, "Should find image in regular directory");
-        assert!(found_hidden, "Should find image in hidden directory when include_hidden is true");
+        assert!(
+            found_hidden,
+            "Should find image in hidden directory when include_hidden is true"
+        );
     }
 
     #[test]
@@ -889,25 +999,35 @@ mod tests {
 
         let paths = vec![test_dir.to_path_buf()];
         let images = scan_for_images(&paths, false, false).expect("Failed to scan for images");
-        
+
         // Use in-memory cache to test optimization
         let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
         let grid_size = 64;
-        
+
         // First run: populate cache (should have 0 hits, 3 misses)
-        let hashes1 = generate_hashes_with_cache(&images, grid_size, &cache, false).expect("Failed to generate hashes first time");
+        let hashes1 = generate_hashes_with_cache(&images, grid_size, &cache, false)
+            .expect("Failed to generate hashes first time");
         assert_eq!(hashes1.len(), 3, "Should generate 3 hashes");
-        
+
         // Second run: should be all cache hits (3 hits, 0 misses)
-        let hashes2 = generate_hashes_with_cache(&images, grid_size, &cache, false).expect("Failed to generate hashes second time");
-        assert_eq!(hashes2.len(), 3, "Should still generate 3 hashes from cache");
-        
+        let hashes2 = generate_hashes_with_cache(&images, grid_size, &cache, false)
+            .expect("Failed to generate hashes second time");
+        assert_eq!(
+            hashes2.len(),
+            3,
+            "Should still generate 3 hashes from cache"
+        );
+
         // Verify hashes are identical (cache optimization preserves correctness)
         for i in 0..3 {
             assert_eq!(hashes1[i].0, hashes2[i].0, "Paths should match");
-            assert_eq!(hashes1[i].1.encode(), hashes2[i].1.encode(), "Hash strings should be identical");
+            assert_eq!(
+                hashes1[i].1.encode(),
+                hashes2[i].1.encode(),
+                "Hash strings should be identical"
+            );
         }
-        
+
         // The optimization should avoid file processing entirely on the second run
         // This is evidenced by the cache stats showing all hits, no misses
     }
