@@ -290,17 +290,17 @@ fn validate_image_format(path: &Path) -> Result<bool> {
     let mut buffer = [0u8; 16]; // Read first 16 bytes for magic number checking
     use std::io::Read;
     let bytes_read = file.read(&mut buffer)?;
-    
+
     if bytes_read < 4 {
         return Ok(false); // File too small to have valid image header
     }
-    
+
     let extension = path
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|s| s.to_lowercase())
         .unwrap_or_default();
-    
+
     match extension.as_str() {
         "png" => {
             // PNG magic number: 89 50 4E 47 0D 0A 1A 0A
@@ -324,8 +324,8 @@ fn validate_image_format(path: &Path) -> Result<bool> {
         }
         "tiff" | "tif" => {
             // TIFF magic number: MM00 (big endian) or II*\0 (little endian)
-            Ok(buffer.starts_with(&[0x4D, 0x4D, 0x00, 0x2A]) || 
-               buffer.starts_with(&[0x49, 0x49, 0x2A, 0x00]))
+            Ok(buffer.starts_with(&[0x4D, 0x4D, 0x00, 0x2A])
+                || buffer.starts_with(&[0x49, 0x49, 0x2A, 0x00]))
         }
         _ => Ok(true), // For unknown extensions, let the image crate handle validation
     }
@@ -420,7 +420,12 @@ fn main() -> Result<()> {
     }
 
     println!("Scanning paths for images...");
-    let images = scan_for_images(&args.paths, args.include_hidden, args.debug, args.skip_validation)?;
+    let images = scan_for_images(
+        &args.paths,
+        args.include_hidden,
+        args.debug,
+        args.skip_validation,
+    )?;
 
     println!("Found {} images", images.len());
     println!("Generating perceptual hashes...");
@@ -465,125 +470,134 @@ fn load_config() -> Result<Config> {
     }
 }
 
-fn scan_for_images(paths: &[PathBuf], include_hidden: bool, debug: bool, skip_validation: bool) -> Result<Vec<PathBuf>> {
+fn should_process_image_file(
+    path: &Path,
+    image_extensions: &[&str],
+    skip_validation: bool,
+    debug: bool,
+) -> bool {
+    // Check if file is accessible (handles broken symlinks)
+    if !path.exists() || fs::metadata(path).is_err() {
+        eprintln!("Warning: Skipping inaccessible file: {}", path.display());
+        return false;
+    }
+
+    let Some(ext) = path.extension() else {
+        return false;
+    };
+
+    if !image_extensions.contains(&ext.to_string_lossy().to_lowercase().as_str()) {
+        return false;
+    }
+
+    if skip_validation {
+        if debug {
+            println!("Found image (validation skipped): {}", path.display());
+        }
+        return true;
+    }
+
+    // Validate file format before adding to processing list
+    match validate_image_format(path) {
+        Ok(true) => {
+            if debug {
+                println!("Found valid image: {}", path.display());
+            }
+            true
+        }
+        Ok(false) => {
+            if debug {
+                eprintln!(
+                    "Warning: File {} has wrong format for extension {}",
+                    path.display(),
+                    ext.to_string_lossy()
+                );
+            }
+            false
+        }
+        Err(e) => {
+            if debug {
+                eprintln!("Warning: Could not validate {}: {}", path.display(), e);
+            }
+            false
+        }
+    }
+}
+
+fn process_file(
+    path: &Path,
+    image_extensions: &[&str],
+    skip_validation: bool,
+    debug: bool,
+) -> Vec<PathBuf> {
+    if should_process_image_file(path, image_extensions, skip_validation, debug) {
+        vec![path.to_path_buf()]
+    } else {
+        vec![]
+    }
+}
+
+fn process_dir(
+    path: &Path,
+    include_hidden: bool,
+    image_extensions: &[&str],
+    skip_validation: bool,
+    debug: bool,
+) -> Result<Vec<PathBuf>> {
+    let mut images = Vec::new();
+    let walker = WalkDir::new(path)
+        .follow_links(true)
+        .into_iter()
+        .filter_entry(|e| {
+            if include_hidden {
+                true
+            } else {
+                // Allow the root path, skip hidden directories (starting with .)
+                if e.depth() == 0 {
+                    true
+                } else if e.file_type().is_dir() {
+                    if let Some(file_name) = e.file_name().to_str() {
+                        !file_name.starts_with('.')
+                    } else {
+                        true
+                    }
+                } else {
+                    true
+                }
+            }
+        });
+
+    for entry in walker {
+        match entry {
+            Ok(entry) => {
+                let path = entry.path();
+                if path.is_file() {
+                    images.extend(process_file(path, image_extensions, skip_validation, debug));
+                }
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not access directory entry: {}", e);
+            }
+        }
+    }
+
+    Ok(images)
+}
+
+fn scan_for_images(
+    paths: &[PathBuf],
+    include_hidden: bool,
+    debug: bool,
+    skip_validation: bool,
+) -> Result<Vec<PathBuf>> {
     let mut images = Vec::new();
     let image_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"];
 
     for path in paths {
         if path.is_file() {
-            // Check if file is accessible (handles broken symlinks)
-            if path.exists() && fs::metadata(path).is_ok() {
-                if let Some(ext) = path.extension() {
-                    if image_extensions.contains(&ext.to_string_lossy().to_lowercase().as_str()) {
-                        if skip_validation {
-                            if debug {
-                                println!("Found image (validation skipped): {}", path.display());
-                            }
-                            images.push(path.clone());
-                        } else {
-                            // Validate file format before adding to processing list
-                            match validate_image_format(path) {
-                                Ok(true) => {
-                                    if debug {
-                                        println!("Found valid image: {}", path.display());
-                                    }
-                                    images.push(path.clone());
-                                }
-                                Ok(false) => {
-                                    if debug {
-                                        eprintln!("Warning: File {} has wrong format for extension {}", 
-                                                 path.display(), ext.to_string_lossy());
-                                    }
-                                }
-                                Err(e) => {
-                                    if debug {
-                                        eprintln!("Warning: Could not validate {}: {}", path.display(), e);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                eprintln!("Warning: Skipping inaccessible file: {}", path.display());
-            }
+            images.extend(process_file(path, &image_extensions, skip_validation, debug));
         } else if path.is_dir() {
-            let walker = WalkDir::new(path)
-                .follow_links(true)
-                .into_iter()
-                .filter_entry(|e| {
-                    if include_hidden {
-                        true
-                    } else {
-                        // Allow the root path, skip hidden directories (starting with .)
-                        if e.depth() == 0 {
-                            true
-                        } else if e.file_type().is_dir() {
-                            if let Some(file_name) = e.file_name().to_str() {
-                                !file_name.starts_with('.')
-                            } else {
-                                true
-                            }
-                        } else {
-                            true
-                        }
-                    }
-                });
-
-            for entry in walker {
-                match entry {
-                    Ok(entry) => {
-                        let path = entry.path();
-
-                        if path.is_file() {
-                            // Check if file is accessible (handles broken symlinks)
-                            if path.exists() && fs::metadata(path).is_ok() {
-                                if let Some(ext) = path.extension() {
-                                    if image_extensions
-                                        .contains(&ext.to_string_lossy().to_lowercase().as_str())
-                                    {
-                                        if skip_validation {
-                                            if debug {
-                                                println!("Found image (validation skipped): {}", path.display());
-                                            }
-                                            images.push(path.to_path_buf());
-                                        } else {
-                                            // Validate file format before adding to processing list
-                                            match validate_image_format(path) {
-                                                Ok(true) => {
-                                                    if debug {
-                                                        println!("Found valid image: {}", path.display());
-                                                    }
-                                                    images.push(path.to_path_buf());
-                                                }
-                                                Ok(false) => {
-                                                    if debug {
-                                                        eprintln!("Warning: File {} has wrong format for extension {}", 
-                                                                 path.display(), ext.to_string_lossy());
-                                                    }
-                                                }
-                                                Err(e) => {
-                                                    if debug {
-                                                        eprintln!("Warning: Could not validate {}: {}", path.display(), e);
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            } else {
-                                eprintln!(
-                                    "Warning: Skipping inaccessible file: {}",
-                                    path.display()
-                                );
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Warning: Could not access directory entry: {}", e);
-                    }
-                }
-            }
+            images.extend(process_dir(path, include_hidden, &image_extensions, skip_validation, debug)?);
         }
     }
 
@@ -649,7 +663,7 @@ fn generate_hashes_with_cache(
                         eprintln!(
                             "Warning: Invalid cached hash encoding for {}: {:?}",
                             image_path.display(),
-                            e
+                            e.utf8_error()
                         );
                         // Need to reprocess this file
                         files_to_process.push((image_path, size, sha256));
@@ -666,32 +680,24 @@ fn generate_hashes_with_cache(
     if !files_to_process.is_empty() {
         let hasher = PerceptualHasher::default();
 
-        // Second pass: process only files that need hashing
-        for (image_path, size, sha256) in files_to_process {
-            if debug {
-                println!("Processing: {}", image_path.display());
-            }
-            match image::open(&image_path) {
-                Ok(img) => {
-                    match generate_rotation_invariant_hash_safe(&hasher, &img) {
+        // Second pass: process files in parallel, then store results sequentially
+        let processing_results: Vec<_> = files_to_process
+            .par_iter()
+            .map(|(image_path, size, sha256)| {
+                if debug {
+                    println!("Processing: {}", image_path.display());
+                }
+
+                match image::open(image_path) {
+                    Ok(img) => match generate_rotation_invariant_hash_safe(&hasher, &img) {
                         Ok(hash) => {
                             let metadata = FileMetadata {
                                 path: image_path.clone(),
-                                size,
-                                sha256,
+                                size: *size,
+                                sha256: sha256.clone(),
                                 perceptual_hash: hash.encode().into_bytes(),
                             };
-
-                            if let Err(e) = cache.store_hash(&metadata) {
-                                eprintln!(
-                                    "Warning: Could not cache hash for {}: {}",
-                                    image_path.display(),
-                                    e
-                                );
-                            }
-
-                            hashes.push((image_path, hash));
-                            cache_misses += 1;
+                            Ok((image_path.clone(), hash, Some(metadata)))
                         }
                         Err(e) => {
                             eprintln!(
@@ -699,34 +705,54 @@ fn generate_hashes_with_cache(
                                 image_path.display(),
                                 e
                             );
-                            // Remove broken file from cache if it exists
-                            if let Err(cache_err) = cache.remove_file_entry(&image_path) {
-                                eprintln!(
-                                    "Warning: Could not remove broken file from cache: {}",
-                                    cache_err
-                                );
-                            }
+                            Err(image_path.clone())
                         }
+                    },
+                    Err(e) => {
+                        // Provide more specific error messages for common image format issues
+                        let error_msg = if e.to_string().contains("invalid PNG signature") {
+                            format!("Invalid PNG file (corrupted or wrong format): {}", e)
+                        } else if e.to_string().contains("invalid JPEG") {
+                            format!("Invalid JPEG file (corrupted or wrong format): {}", e)
+                        } else if e.to_string().contains("unsupported") {
+                            format!("Unsupported image format: {}", e)
+                        } else {
+                            format!("Image decoding error: {}", e)
+                        };
+
+                        if debug {
+                            eprintln!(
+                                "Warning: Could not open {}: {}",
+                                image_path.display(),
+                                error_msg
+                            );
+                        } else {
+                            eprintln!("Warning: Skipping {}: {}", image_path.display(), error_msg);
+                        }
+
+                        Err(image_path.clone())
                     }
                 }
-                Err(e) => {
-                    // Provide more specific error messages for common image format issues
-                    let error_msg = if e.to_string().contains("invalid PNG signature") {
-                        format!("Invalid PNG file (corrupted or wrong format): {}", e)
-                    } else if e.to_string().contains("invalid JPEG") {
-                        format!("Invalid JPEG file (corrupted or wrong format): {}", e)
-                    } else if e.to_string().contains("unsupported") {
-                        format!("Unsupported image format: {}", e)
-                    } else {
-                        format!("Image decoding error: {}", e)
-                    };
-                    
-                    if debug {
-                        eprintln!("Warning: Could not open {}: {}", image_path.display(), error_msg);
-                    } else {
-                        eprintln!("Warning: Skipping {}: {}", image_path.display(), error_msg);
+            })
+            .collect();
+
+        // Now handle cache operations and result collection sequentially
+        for result in processing_results {
+            match result {
+                Ok((image_path, hash, metadata_opt)) => {
+                    if let Some(metadata) = metadata_opt {
+                        if let Err(e) = cache.store_hash(&metadata) {
+                            eprintln!(
+                                "Warning: Could not cache hash for {}: {}",
+                                image_path.display(),
+                                e
+                            );
+                        }
                     }
-                    
+                    hashes.push((image_path, hash));
+                    cache_misses += 1;
+                }
+                Err(image_path) => {
                     // Remove broken file from cache if it exists
                     if let Err(cache_err) = cache.remove_file_entry(&image_path) {
                         eprintln!(
@@ -751,46 +777,60 @@ fn generate_hashes(
     _grid_size: u32,
     debug: bool,
 ) -> Result<Vec<(PathBuf, ImageHash)>> {
-    let mut hashes = Vec::new();
     let hasher = PerceptualHasher::default();
 
-    for image_path in images {
-        if debug {
-            println!("Processing: {}", image_path.display());
-        }
-        match image::open(image_path) {
-            Ok(img) => match generate_rotation_invariant_hash_safe(&hasher, &img) {
-                Ok(hash) => {
-                    hashes.push((image_path.clone(), hash));
-                }
+    // Process images in parallel
+    let processing_results: Vec<_> = images
+        .par_iter()
+        .map(|image_path| {
+            if debug {
+                println!("Processing: {}", image_path.display());
+            }
+
+            match image::open(image_path) {
+                Ok(img) => match generate_rotation_invariant_hash_safe(&hasher, &img) {
+                    Ok(hash) => Ok((image_path.clone(), hash)),
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: Could not generate hash for {}: {}",
+                            image_path.display(),
+                            e
+                        );
+                        Err(())
+                    }
+                },
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Could not generate hash for {}: {}",
-                        image_path.display(),
-                        e
-                    );
-                }
-            },
-            Err(e) => {
-                // Provide more specific error messages for common image format issues
-                let error_msg = if e.to_string().contains("invalid PNG signature") {
-                    format!("Invalid PNG file (corrupted or wrong format): {}", e)
-                } else if e.to_string().contains("invalid JPEG") {
-                    format!("Invalid JPEG file (corrupted or wrong format): {}", e)
-                } else if e.to_string().contains("unsupported") {
-                    format!("Unsupported image format: {}", e)
-                } else {
-                    format!("Image decoding error: {}", e)
-                };
-                
-                if debug {
-                    eprintln!("Warning: Could not open {}: {}", image_path.display(), error_msg);
-                } else {
-                    eprintln!("Warning: Skipping {}: {}", image_path.display(), error_msg);
+                    // Provide more specific error messages for common image format issues
+                    let error_msg = if e.to_string().contains("invalid PNG signature") {
+                        format!("Invalid PNG file (corrupted or wrong format): {}", e)
+                    } else if e.to_string().contains("invalid JPEG") {
+                        format!("Invalid JPEG file (corrupted or wrong format): {}", e)
+                    } else if e.to_string().contains("unsupported") {
+                        format!("Unsupported image format: {}", e)
+                    } else {
+                        format!("Image decoding error: {}", e)
+                    };
+
+                    if debug {
+                        eprintln!(
+                            "Warning: Could not open {}: {}",
+                            image_path.display(),
+                            error_msg
+                        );
+                    } else {
+                        eprintln!("Warning: Skipping {}: {}", image_path.display(), error_msg);
+                    }
+                    Err(())
                 }
             }
-        }
-    }
+        })
+        .collect();
+
+    // Collect successful results
+    let hashes = processing_results
+        .into_iter()
+        .filter_map(|result| result.ok())
+        .collect();
 
     Ok(hashes)
 }
@@ -886,7 +926,8 @@ mod tests {
         }
 
         let paths = vec![test_dir.to_path_buf()];
-        let images = scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
+        let images =
+            scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
 
         assert_eq!(
             images.len(),
@@ -942,7 +983,8 @@ mod tests {
         }
 
         let paths = vec![test_dir.to_path_buf()];
-        let images = scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
+        let images =
+            scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
 
         let extensions: std::collections::HashSet<_> = images
             .iter()
@@ -963,7 +1005,8 @@ mod tests {
         }
 
         let paths = vec![test_dir.to_path_buf()];
-        let images = scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
+        let images =
+            scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
 
         assert_eq!(
             images.len(),
@@ -1024,7 +1067,8 @@ mod tests {
 
         // Test scanning with broken symlink
         let paths = vec![temp_path.to_path_buf()];
-        let images = scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
+        let images =
+            scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
 
         // Should only find the real image, broken symlink should be skipped
         assert_eq!(images.len(), 1, "Should find only the real image file");
@@ -1127,7 +1171,8 @@ mod tests {
         }
 
         let paths = vec![test_dir.to_path_buf()];
-        let images = scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
+        let images =
+            scan_for_images(&paths, false, false, false).expect("Failed to scan for images");
 
         // Use in-memory cache to test optimization
         let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
