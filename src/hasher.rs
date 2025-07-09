@@ -7,6 +7,13 @@ use std::path::{Path, PathBuf};
 
 use crate::cache::{FileMetadata, HashCache};
 
+#[derive(Debug, Clone)]
+pub struct ImageMetadata {
+    pub path: PathBuf,
+    pub size: u64,
+    pub sha256: String,
+}
+
 pub fn calculate_file_sha256(path: &Path) -> Result<String> {
     let data = fs::read(path)?;
     let mut hasher = Sha256::new();
@@ -59,7 +66,11 @@ pub fn generate_hashes_with_cache(
     let metadata_results: Vec<_> = images
         .par_iter()
         .map(|image_path| match get_file_metadata(image_path) {
-            Ok((size, sha256)) => Some((image_path.clone(), size, sha256)),
+            Ok((size, sha256)) => Some(ImageMetadata {
+                path: image_path.clone(),
+                size,
+                sha256,
+            }),
             Err(e) => {
                 eprintln!(
                     "Warning: Could not get metadata for {} (possibly broken symlink): {}",
@@ -75,12 +86,11 @@ pub fn generate_hashes_with_cache(
     let mut hashes = Vec::new();
     let mut cache_hits = 0;
     let mut cache_misses = 0;
-    let mut files_to_process = Vec::new();
+    let mut files_to_process: Vec<ImageMetadata> = Vec::new();
 
     // First pass: check cache and collect cache hits
-    for metadata_result in metadata_results.into_iter().flatten() {
-        let (image_path, size, sha256) = metadata_result;
-        if let Ok(Some(cached_hash_bytes)) = cache.get_cached_hash(&image_path, size, &sha256) {
+    for metadata in metadata_results.into_iter().flatten() {
+        if let Ok(Some(cached_hash_bytes)) = cache.get_cached_hash(&metadata.path, metadata.size, &metadata.sha256) {
             match String::from_utf8(cached_hash_bytes) {
                 Ok(hash_string) => {
                     // For imghash, we need to decode the string back to ImageHash
@@ -88,35 +98,35 @@ pub fn generate_hashes_with_cache(
                     match ImageHash::decode(&hash_string, 8, 8) {
                         Ok(hash) => {
                             if debug {
-                                println!("Cache hit: {}", image_path.display());
+                                println!("Cache hit: {}", metadata.path.display());
                             }
-                            hashes.push((image_path, hash));
+                            hashes.push((metadata.path, hash));
                             cache_hits += 1;
                         }
                         Err(e) => {
                             eprintln!(
                                 "Warning: Invalid cached hash format for {}: {}",
-                                image_path.display(),
+                                metadata.path.display(),
                                 e
                             );
                             // Need to reprocess this file
-                            files_to_process.push((image_path, size, sha256));
+                            files_to_process.push(metadata);
                         }
                     }
                 }
                 Err(e) => {
                     eprintln!(
                         "Warning: Invalid cached hash encoding for {}: {:?}",
-                        image_path.display(),
+                        metadata.path.display(),
                         e.utf8_error()
                     );
                     // Need to reprocess this file
-                    files_to_process.push((image_path, size, sha256));
+                    files_to_process.push(metadata);
                 }
             }
         } else {
             // Cache miss - need to process this file
-            files_to_process.push((image_path, size, sha256));
+            files_to_process.push(metadata);
         }
     }
 
@@ -127,29 +137,29 @@ pub fn generate_hashes_with_cache(
         // Second pass: process files in parallel, then store results sequentially
         let processing_results: Vec<_> = files_to_process
             .par_iter()
-            .map(|(image_path, size, sha256)| {
+            .map(|metadata| {
                 if debug {
-                    println!("Processing: {}", image_path.display());
+                    println!("Processing: {}", metadata.path.display());
                 }
 
-                match image::open(image_path) {
+                match image::open(&metadata.path) {
                     Ok(img) => match generate_rotation_invariant_hash_safe(&hasher, &img) {
                         Ok(hash) => {
-                            let metadata = FileMetadata {
-                                path: image_path.clone(),
-                                size: *size,
-                                sha256: sha256.clone(),
+                            let file_metadata = FileMetadata {
+                                path: metadata.path.clone(),
+                                size: metadata.size,
+                                sha256: metadata.sha256.clone(),
                                 perceptual_hash: hash.encode().into_bytes(),
                             };
-                            Ok((image_path.clone(), hash, Some(metadata)))
+                            Ok((metadata.path.clone(), hash, Some(file_metadata)))
                         }
                         Err(e) => {
                             eprintln!(
                                 "Warning: Could not generate hash for {}: {}",
-                                image_path.display(),
+                                metadata.path.display(),
                                 e
                             );
-                            Err(image_path.clone())
+                            Err(metadata.path.clone())
                         }
                     },
                     Err(e) => {
@@ -167,14 +177,14 @@ pub fn generate_hashes_with_cache(
                         if debug {
                             eprintln!(
                                 "Warning: Could not open {}: {}",
-                                image_path.display(),
+                                metadata.path.display(),
                                 error_msg
                             );
                         } else {
-                            eprintln!("Warning: Skipping {}: {}", image_path.display(), error_msg);
+                            eprintln!("Warning: Skipping {}: {}", metadata.path.display(), error_msg);
                         }
 
-                        Err(image_path.clone())
+                        Err(metadata.path.clone())
                     }
                 }
             })

@@ -80,7 +80,7 @@ pub fn should_process_image_file(
     match validate_image_format(path) {
         Ok(true) => {
             if debug {
-                println!("Skipping validation for: {}", path.display());
+                println!("Validated: {}", path.display());
             }
             true
         }
