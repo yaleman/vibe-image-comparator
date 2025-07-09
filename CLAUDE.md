@@ -91,6 +91,12 @@ cargo run -- --clean-cache
 # Show duplicate matches from cache only (no scanning)
 cargo run -- --show-matches --threshold 10
 
+# Show current configuration settings
+cargo run -- --show-config
+
+# Show configuration with CLI overrides
+cargo run -- --show-config --threshold 10 --grid-size 32
+
 # Using justfile
 just run /path/to/images --threshold 10 --grid-size 64
 ```

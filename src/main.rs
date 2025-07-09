@@ -11,7 +11,7 @@ mod hasher;
 mod scanner;
 
 use cache::HashCache;
-use config::load_config;
+use config::{load_config, show_config_with_overrides};
 use hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
 use scanner::scan_for_images;
 
@@ -56,12 +56,24 @@ struct Args {
         help = "Show duplicate matches from cache database only (no scanning)"
     )]
     show_matches: bool,
+
+    #[arg(
+        long,
+        help = "Show current configuration settings"
+    )]
+    show_config: bool,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
     let config = load_config()?;
+
+    // Handle show_config flag
+    if args.show_config {
+        show_config_with_overrides(args.threshold, args.grid_size)?;
+        return Ok(());
+    }
 
     let cache = HashCache::new(config.database_path.as_deref())?;
 

@@ -285,7 +285,7 @@ pub fn get_duplicates_from_cache(cache: &HashCache, threshold: u32) -> Result<Ve
     }
     
     if failed_conversions > 0 {
-        println!("Warning: Failed to convert {} cached entries", failed_conversions);
+        println!("Warning: Failed to convert {failed_conversions} cached entries");
     }
     
     println!("Processing {} valid cached hashes for duplicates...", hashes.len());
