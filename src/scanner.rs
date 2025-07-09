@@ -155,7 +155,7 @@ pub fn process_dir(
                 }
             }
             Err(e) => {
-                eprintln!("Warning: Could not access directory entry: {}", e);
+                eprintln!("Warning: Could not access directory entry: {e}");
             }
         }
     }

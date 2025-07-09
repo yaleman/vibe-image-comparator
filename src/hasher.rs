@@ -78,46 +78,45 @@ pub fn generate_hashes_with_cache(
     let mut files_to_process = Vec::new();
 
     // First pass: check cache and collect cache hits
-    for metadata_result in metadata_results {
-        if let Some((image_path, size, sha256)) = metadata_result {
-            if let Ok(Some(cached_hash_bytes)) = cache.get_cached_hash(&image_path, size, &sha256) {
-                match String::from_utf8(cached_hash_bytes) {
-                    Ok(hash_string) => {
-                        // For imghash, we need to decode the string back to ImageHash
-                        // We'll store the encoded string in cache and decode on retrieval
-                        match ImageHash::decode(&hash_string, 8, 8) {
-                            Ok(hash) => {
-                                if debug {
-                                    println!("Cache hit: {}", image_path.display());
-                                }
-                                hashes.push((image_path, hash));
-                                cache_hits += 1;
+    for metadata_result in metadata_results.into_iter().flatten() {
+        let (image_path, size, sha256) = metadata_result;
+        if let Ok(Some(cached_hash_bytes)) = cache.get_cached_hash(&image_path, size, &sha256) {
+            match String::from_utf8(cached_hash_bytes) {
+                Ok(hash_string) => {
+                    // For imghash, we need to decode the string back to ImageHash
+                    // We'll store the encoded string in cache and decode on retrieval
+                    match ImageHash::decode(&hash_string, 8, 8) {
+                        Ok(hash) => {
+                            if debug {
+                                println!("Cache hit: {}", image_path.display());
                             }
-                            Err(e) => {
-                                eprintln!(
-                                    "Warning: Invalid cached hash format for {}: {}",
-                                    image_path.display(),
-                                    e
-                                );
-                                // Need to reprocess this file
-                                files_to_process.push((image_path, size, sha256));
-                            }
+                            hashes.push((image_path, hash));
+                            cache_hits += 1;
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: Invalid cached hash format for {}: {}",
+                                image_path.display(),
+                                e
+                            );
+                            // Need to reprocess this file
+                            files_to_process.push((image_path, size, sha256));
                         }
                     }
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: Invalid cached hash encoding for {}: {:?}",
-                            image_path.display(),
-                            e.utf8_error()
-                        );
-                        // Need to reprocess this file
-                        files_to_process.push((image_path, size, sha256));
-                    }
                 }
-            } else {
-                // Cache miss - need to process this file
-                files_to_process.push((image_path, size, sha256));
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Invalid cached hash encoding for {}: {:?}",
+                        image_path.display(),
+                        e.utf8_error()
+                    );
+                    // Need to reprocess this file
+                    files_to_process.push((image_path, size, sha256));
+                }
             }
+        } else {
+            // Cache miss - need to process this file
+            files_to_process.push((image_path, size, sha256));
         }
     }
 
@@ -156,13 +155,13 @@ pub fn generate_hashes_with_cache(
                     Err(e) => {
                         // Provide more specific error messages for common image format issues
                         let error_msg = if e.to_string().contains("invalid PNG signature") {
-                            format!("Invalid PNG file (corrupted or wrong format): {}", e)
+                            format!("Invalid PNG file (corrupted or wrong format): {e}")
                         } else if e.to_string().contains("invalid JPEG") {
-                            format!("Invalid JPEG file (corrupted or wrong format): {}", e)
+                            format!("Invalid JPEG file (corrupted or wrong format): {e}")
                         } else if e.to_string().contains("unsupported") {
-                            format!("Unsupported image format: {}", e)
+                            format!("Unsupported image format: {e}")
                         } else {
-                            format!("Image decoding error: {}", e)
+                            format!("Image decoding error: {e}")
                         };
 
                         if debug {
@@ -200,10 +199,7 @@ pub fn generate_hashes_with_cache(
                 Err(image_path) => {
                     // Remove broken file from cache if it exists
                     if let Err(cache_err) = cache.remove_file_entry(&image_path) {
-                        eprintln!(
-                            "Warning: Could not remove broken file from cache: {}",
-                            cache_err
-                        );
+                        eprintln!("Warning: Could not remove broken file from cache: {cache_err}");
                     }
                 }
             }

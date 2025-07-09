@@ -53,6 +53,8 @@ impl HashCache {
         Ok(HashCache { conn })
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
     pub fn new_in_memory() -> Result<Self> {
         let conn = Connection::open(":memory:")?;
         Self::create_tables(&conn)?;
@@ -260,10 +262,7 @@ impl HashCache {
         // Show deduplication ratio
         if file_count > 0 && hash_count > 0 {
             let ratio = hash_count as f64 / file_count as f64;
-            println!(
-                "Deduplication ratio: {:.2} (lower = more deduplication)",
-                ratio
-            );
+            println!("Deduplication ratio: {ratio:.2} (lower = more deduplication)");
         }
 
         println!("=== End Debug Info ===\n");
