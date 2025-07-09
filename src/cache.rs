@@ -26,7 +26,7 @@ pub struct FileMetadata {
     pub path: PathBuf,
     pub size: u64,
     pub sha256: String,
-    pub perceptual_hash: Vec<u8>,
+    pub perceptual_hash: String,
 }
 
 pub struct HashCache {
@@ -49,6 +49,7 @@ impl HashCache {
 
         Self::create_tables(&conn)?;
         Self::migrate_old_schema(&conn)?;
+        Self::migrate_blob_to_text(&conn)?;
 
         Ok(HashCache { conn })
     }
@@ -67,7 +68,7 @@ impl HashCache {
             "CREATE TABLE IF NOT EXISTS perceptual_hashes (
                 id INTEGER PRIMARY KEY,
                 sha256 TEXT UNIQUE NOT NULL,
-                perceptual_hash BLOB NOT NULL,
+                perceptual_hash TEXT NOT NULL,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             )",
             [],
@@ -144,7 +145,7 @@ impl HashCache {
         Ok(())
     }
 
-    pub fn get_cached_hash(&self, path: &Path, size: u64, sha256: &str) -> Result<Option<Vec<u8>>> {
+    pub fn get_cached_hash(&self, path: &Path, size: u64, sha256: &str) -> Result<Option<String>> {
         let mut stmt = self.conn.prepare(
             "SELECT ph.perceptual_hash 
              FROM files f 
@@ -153,7 +154,7 @@ impl HashCache {
         )?;
 
         let mut rows = stmt.query_map(params![path.to_string_lossy(), size, sha256], |row| {
-            row.get::<_, Vec<u8>>(0)
+            row.get::<_, String>(0)
         })?;
 
         if let Some(row) = rows.next() {
@@ -239,6 +240,62 @@ impl HashCache {
         }
 
         Ok(())
+    }
+
+    fn migrate_blob_to_text(conn: &Connection) -> Result<()> {
+        // Check if perceptual_hashes table has BLOB column
+        let mut stmt = conn.prepare("PRAGMA table_info(perceptual_hashes)")?;
+        let column_info: Vec<(String, String)> = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(1)?, // column name
+                    row.get::<_, String>(2)?, // column type
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Check if perceptual_hash column is BLOB
+        let needs_migration = column_info
+            .iter()
+            .any(|(name, col_type)| name == "perceptual_hash" && col_type.to_uppercase() == "BLOB");
+
+        if needs_migration {
+            println!("Migrating cache schema from BLOB to TEXT...");
+            
+            // Drop the old tables - this will lose cached data but ensures compatibility
+            conn.execute("DROP TABLE IF EXISTS files", [])?;
+            conn.execute("DROP TABLE IF EXISTS perceptual_hashes", [])?;
+            
+            // Recreate tables with correct schema
+            Self::create_tables(conn)?;
+            
+            println!("Cache schema migration completed");
+        }
+
+        Ok(())
+    }
+
+    pub fn get_all_cached_hashes(&self) -> Result<Vec<(PathBuf, String)>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.path, ph.perceptual_hash 
+             FROM files f 
+             JOIN perceptual_hashes ph ON f.perceptual_hash_id = ph.id
+             WHERE EXISTS (SELECT 1 FROM files WHERE path = f.path)"
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                PathBuf::from(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            results.push(row?);
+        }
+
+        Ok(results)
     }
 
     #[allow(dead_code)]

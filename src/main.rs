@@ -12,7 +12,7 @@ mod scanner;
 
 use cache::HashCache;
 use config::load_config;
-use hasher::{find_duplicates, generate_hashes_with_cache};
+use hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
 use scanner::scan_for_images;
 
 #[derive(Parser)]
@@ -50,6 +50,12 @@ struct Args {
         help = "Skip file format validation (process files even with wrong magic numbers)"
     )]
     skip_validation: bool,
+
+    #[arg(
+        long,
+        help = "Show duplicate matches from cache database only (no scanning)"
+    )]
+    show_matches: bool,
 }
 
 fn main() -> Result<()> {
@@ -65,6 +71,29 @@ fn main() -> Result<()> {
         if args.paths.is_empty() {
             return Ok(());
         }
+    }
+
+    // Handle show_matches flag - only show cached duplicates
+    if args.show_matches {
+        let threshold = args.threshold.unwrap_or(config.threshold);
+        println!("Using threshold: {threshold}");
+        println!("Hash caching enabled");
+        
+        let duplicates = get_duplicates_from_cache(&cache, threshold)?;
+        
+        if duplicates.is_empty() {
+            println!("No duplicate images found in cache");
+        } else {
+            println!("Found {} duplicate sets in cache:", duplicates.len());
+            for (i, group) in duplicates.iter().enumerate() {
+                println!("  Group {}:", i + 1);
+                for path in group {
+                    println!("    {}", path.display());
+                }
+            }
+        }
+        
+        return Ok(());
     }
 
     if args.paths.is_empty() {

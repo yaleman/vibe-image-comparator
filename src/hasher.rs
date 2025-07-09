@@ -90,35 +90,21 @@ pub fn generate_hashes_with_cache(
 
     // First pass: check cache and collect cache hits
     for metadata in metadata_results.into_iter().flatten() {
-        if let Ok(Some(cached_hash_bytes)) = cache.get_cached_hash(&metadata.path, metadata.size, &metadata.sha256) {
-            match String::from_utf8(cached_hash_bytes) {
-                Ok(hash_string) => {
-                    // For imghash, we need to decode the string back to ImageHash
-                    // We'll store the encoded string in cache and decode on retrieval
-                    match ImageHash::decode(&hash_string, 8, 8) {
-                        Ok(hash) => {
-                            if debug {
-                                println!("Cache hit: {}", metadata.path.display());
-                            }
-                            hashes.push((metadata.path, hash));
-                            cache_hits += 1;
-                        }
-                        Err(e) => {
-                            eprintln!(
-                                "Warning: Invalid cached hash format for {}: {}",
-                                metadata.path.display(),
-                                e
-                            );
-                            // Need to reprocess this file
-                            files_to_process.push(metadata);
-                        }
+        if let Ok(Some(hash_string)) = cache.get_cached_hash(&metadata.path, metadata.size, &metadata.sha256) {
+            // Decode the string back to ImageHash
+            match ImageHash::decode(&hash_string, 8, 8) {
+                Ok(hash) => {
+                    if debug {
+                        println!("Cache hit: {}", metadata.path.display());
                     }
+                    hashes.push((metadata.path, hash));
+                    cache_hits += 1;
                 }
                 Err(e) => {
                     eprintln!(
-                        "Warning: Invalid cached hash encoding for {}: {:?}",
+                        "Warning: Invalid cached hash format for {}: {}",
                         metadata.path.display(),
-                        e.utf8_error()
+                        e
                     );
                     // Need to reprocess this file
                     files_to_process.push(metadata);
@@ -149,7 +135,7 @@ pub fn generate_hashes_with_cache(
                                 path: metadata.path.clone(),
                                 size: metadata.size,
                                 sha256: metadata.sha256.clone(),
-                                perceptual_hash: hash.encode().into_bytes(),
+                                perceptual_hash: hash.encode(),
                             };
                             Ok((metadata.path.clone(), hash, Some(file_metadata)))
                         }
@@ -268,4 +254,44 @@ pub fn find_duplicates(hashes: &[(PathBuf, ImageHash)], threshold: u32) -> Vec<V
     }
 
     groups
+}
+
+pub fn get_duplicates_from_cache(cache: &HashCache, threshold: u32) -> Result<Vec<Vec<PathBuf>>> {
+    println!("Retrieving hashes from cache...");
+    let cached_data = cache.get_all_cached_hashes()?;
+    
+    if cached_data.is_empty() {
+        println!("No cached hashes found");
+        return Ok(Vec::new());
+    }
+
+    println!("Found {} cached entries", cached_data.len());
+    
+    // Convert cached data to (PathBuf, ImageHash) tuples
+    let mut hashes = Vec::new();
+    let mut failed_conversions = 0;
+    
+    for (path, hash_string) in cached_data {
+        // Decode the string to ImageHash
+        match ImageHash::decode(&hash_string, 8, 8) {
+            Ok(hash) => {
+                hashes.push((path, hash));
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not decode hash for {}: {}", path.display(), e);
+                failed_conversions += 1;
+            }
+        }
+    }
+    
+    if failed_conversions > 0 {
+        println!("Warning: Failed to convert {} cached entries", failed_conversions);
+    }
+    
+    println!("Processing {} valid cached hashes for duplicates...", hashes.len());
+    
+    // Find duplicates using the existing function
+    let duplicates = find_duplicates(&hashes, threshold);
+    
+    Ok(duplicates)
 }

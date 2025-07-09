@@ -88,6 +88,9 @@ cargo run -- /path/to/images -.
 # Clean up cache entries for missing files
 cargo run -- --clean-cache
 
+# Show duplicate matches from cache only (no scanning)
+cargo run -- --show-matches --threshold 10
+
 # Using justfile
 just run /path/to/images --threshold 10 --grid-size 64
 ```
