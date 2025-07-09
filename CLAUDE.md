@@ -85,9 +85,6 @@ cargo run -- /path/to/images --threshold 3 --grid-size 32
 # Include hidden directories (starting with .)
 cargo run -- /path/to/images -.
 
-# Disable caching for one-time scans
-cargo run -- /path/to/images --no-cache
-
 # Clean up cache entries for missing files
 cargo run -- --clean-cache
 

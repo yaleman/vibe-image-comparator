@@ -217,69 +217,6 @@ pub fn generate_hashes_with_cache(
     Ok(hashes)
 }
 
-pub fn generate_hashes(
-    images: &[PathBuf],
-    _grid_size: u32,
-    debug: bool,
-) -> Result<Vec<(PathBuf, ImageHash)>> {
-    let hasher = PerceptualHasher::default();
-
-    // Process images in parallel
-    let processing_results: Vec<_> = images
-        .par_iter()
-        .map(|image_path| {
-            if debug {
-                println!("Processing: {}", image_path.display());
-            }
-
-            match image::open(image_path) {
-                Ok(img) => match generate_rotation_invariant_hash_safe(&hasher, &img) {
-                    Ok(hash) => Ok((image_path.clone(), hash)),
-                    Err(e) => {
-                        eprintln!(
-                            "Warning: Could not generate hash for {}: {}",
-                            image_path.display(),
-                            e
-                        );
-                        Err(())
-                    }
-                },
-                Err(e) => {
-                    // Provide more specific error messages for common image format issues
-                    let error_msg = if e.to_string().contains("invalid PNG signature") {
-                        format!("Invalid PNG file (corrupted or wrong format): {}", e)
-                    } else if e.to_string().contains("invalid JPEG") {
-                        format!("Invalid JPEG file (corrupted or wrong format): {}", e)
-                    } else if e.to_string().contains("unsupported") {
-                        format!("Unsupported image format: {}", e)
-                    } else {
-                        format!("Image decoding error: {}", e)
-                    };
-
-                    if debug {
-                        eprintln!(
-                            "Warning: Could not open {}: {}",
-                            image_path.display(),
-                            error_msg
-                        );
-                    } else {
-                        eprintln!("Warning: Skipping {}: {}", image_path.display(), error_msg);
-                    }
-                    Err(())
-                }
-            }
-        })
-        .collect();
-
-    // Collect successful results
-    let hashes = processing_results
-        .into_iter()
-        .filter_map(|result| result.ok())
-        .collect();
-
-    Ok(hashes)
-}
-
 pub fn find_duplicates(hashes: &[(PathBuf, ImageHash)], threshold: u32) -> Vec<Vec<PathBuf>> {
     let mut groups: Vec<Vec<PathBuf>> = Vec::new();
     let mut processed = vec![false; hashes.len()];
