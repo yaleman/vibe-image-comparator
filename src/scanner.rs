@@ -80,7 +80,7 @@ pub fn should_process_image_file(
     match validate_image_format(path) {
         Ok(true) => {
             if debug {
-                println!("Found valid image: {}", path.display());
+                println!("Skipping validation for: {}", path.display());
             }
             true
         }
@@ -174,9 +174,20 @@ pub fn scan_for_images(
 
     for path in paths {
         if path.is_file() {
-            images.extend(process_file(path, &image_extensions, skip_validation, debug));
+            images.extend(process_file(
+                path,
+                &image_extensions,
+                skip_validation,
+                debug,
+            ));
         } else if path.is_dir() {
-            images.extend(process_dir(path, include_hidden, &image_extensions, skip_validation, debug)?);
+            images.extend(process_dir(
+                path,
+                include_hidden,
+                &image_extensions,
+                skip_validation,
+                debug,
+            )?);
         }
     }
 
