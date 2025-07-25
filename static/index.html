@@ -509,11 +509,11 @@
         </header>
 
         <div class="tabs">
-            <button class="tab active" onclick="switchTab('scan')">Scan Folders</button>
-            <button class="tab" onclick="switchTab('matches')">View Cached Matches</button>
+            <button class="tab" onclick="switchTab('scan')">Scan Folders</button>
+            <button class="tab active" onclick="switchTab('matches')">View Cached Matches</button>
         </div>
 
-        <div id="scan-tab" class="tab-content">
+        <div id="scan-tab" class="tab-content" style="display: none;">
             <div id="config-info" class="config-info">
                 <h3>Current Configuration</h3>
                 <div id="config-details"></div>
@@ -562,7 +562,10 @@
             </div>
         </div>
 
-        <div id="matches-tab" class="tab-content" style="display: none;">
+        <div id="matches-tab" class="tab-content">
+            <p style="margin-bottom: 20px; color: #7f8c8d; font-style: italic;">
+                Cached matches are loaded automatically. Use the controls below to adjust the threshold or reload.
+            </p>
             <div class="form-group">
                 <div class="form-row">
                     <div class="form-group">
@@ -570,12 +573,12 @@
                         <input type="number" id="matches-threshold" min="0" max="64" placeholder="Leave empty to use config default">
                     </div>
                     <div>
-                        <button type="button" class="btn" onclick="loadMatches()">Load Cached Matches</button>
+                        <button type="button" class="btn" onclick="loadMatches()">Reload Cached Matches</button>
                     </div>
                 </div>
             </div>
 
-            <div id="matches-loading" class="loading">
+            <div id="matches-loading" class="loading show">
                 <p>⏳ Loading cached duplicate matches...</p>
             </div>
         </div>
@@ -601,9 +604,10 @@
     <script>
         let currentConfig = {};
 
-        // Load configuration on page load
+        // Load configuration and cached matches on page load
         document.addEventListener('DOMContentLoaded', function() {
             loadConfig();
+            loadMatches(); // Auto-load cached matches on page load
         });
 
         async function loadConfig() {
