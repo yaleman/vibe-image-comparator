@@ -570,6 +570,11 @@ impl HashCache {
         info!("  - {} file entries", perceptual_hashes_deleted);
         info!("  - All perceptual hashes");
         
+        // Vacuum the database to reclaim disk space
+        info!("Reclaiming disk space...");
+        self.conn.execute("VACUUM", [])?;
+        info!("Database optimization complete");
+        
         Ok(())
     }
 }
