@@ -603,6 +603,7 @@
 
     <script>
         let currentConfig = {};
+        let duplicateGroups = []; // Store duplicate groups globally
 
         // Load configuration and cached matches on page load
         document.addEventListener('DOMContentLoaded', function() {
@@ -730,35 +731,36 @@
             const results = document.getElementById('results');
             const content = document.getElementById('results-content');
             
+            // Store the duplicate groups globally
+            duplicateGroups = result.duplicates || [];
+            
             let html = `<div class="success">${result.message}</div>`;
             
             if (result.duplicates && result.duplicates.length > 0) {
                 html += '<h3>Duplicate Groups:</h3>';
                 result.duplicates.forEach((group, index) => {
                     html += `
-                        <div class="duplicate-group" onclick="openImageComparison(${index}, ${JSON.stringify(group).replace(/"/g, '&quot;')})">
+                        <div class="duplicate-group" onclick="openImageComparison(${index})">
                             <h4>
                                 Group ${index + 1} (${group.length} files)
-                                <button class="view-comparison-btn" onclick="event.stopPropagation(); openImageComparison(${index}, ${JSON.stringify(group).replace(/"/g, '&quot;')})">
-                                    👁️ Compare
+                                <button class="view-comparison-btn" onclick="event.stopPropagation(); loadGroupThumbnails(${index})">
+                                    👁️ Preview
+                                </button>
+                                <button class="view-comparison-btn" onclick="event.stopPropagation(); openImageComparison(${index})">
+                                    🔍 Compare
                                 </button>
                             </h4>
                             <ul class="file-list">
                                 ${group.map(file => `<li>${file.path}</li>`).join('')}
                             </ul>
                             <div class="thumbnail-preview" id="thumbnails-${index}">
-                                <!-- Thumbnails will be loaded here -->
+                                <div style="color: #7f8c8d; font-style: italic; padding: 10px; text-align: center;">
+                                    Click "Preview" to load thumbnail images
+                                </div>
                             </div>
                         </div>
                     `;
                 });
-                
-                // Load thumbnails and check file existence after the HTML is inserted
-                setTimeout(() => {
-                    result.duplicates.forEach((group, index) => {
-                        checkGroupFileExistence(group, index);
-                    });
-                }, 100);
             } else {
                 html += '<p>No duplicate images found.</p>';
             }
@@ -767,12 +769,29 @@
             results.classList.remove('hide');
         }
 
-        function openImageComparison(groupIndex, fileInfos) {
+        async function loadGroupThumbnails(groupIndex) {
+            if (!duplicateGroups[groupIndex]) return;
+            const fileInfos = duplicateGroups[groupIndex];
+            
+            // First check file existence for this group
+            await checkGroupFileExistence(fileInfos, groupIndex);
+            
+            // Then load thumbnails
+            loadThumbnails(fileInfos, groupIndex);
+        }
+
+        function openImageComparison(groupIndex) {
+            if (!duplicateGroups[groupIndex]) return;
+            const fileInfos = duplicateGroups[groupIndex];
+            
             const modal = document.getElementById('image-modal');
             const modalTitle = document.getElementById('modal-title');
             const imageComparison = document.getElementById('image-comparison');
             
-            // Check if we have existence info yet (exists property may not be accurate initially)
+            // Load thumbnails for this group if not already loaded (for better UX)
+            loadGroupThumbnails(groupIndex);
+            
+            // Check if we have existence info yet (exists property may not be accurate initially)  
             const missingCount = fileInfos.filter(file => file.exists === false).length;
             modalTitle.textContent = `Compare Duplicate Images - Group ${groupIndex + 1}${missingCount > 0 ? ` (${missingCount} missing)` : ''}`;
             
@@ -953,6 +972,11 @@
             const thumbnailContainer = document.getElementById(`thumbnails-${groupIndex}`);
             if (!thumbnailContainer) return;
             
+            // Check if thumbnails are already loaded (avoid reloading)
+            if (thumbnailContainer.querySelector('.thumbnail') || thumbnailContainer.querySelector('.thumbnail-loading')) {
+                return;
+            }
+            
             thumbnailContainer.innerHTML = '';
             
             fileInfos.forEach((fileInfo, imageIndex) => {
@@ -980,7 +1004,7 @@
                     thumbnailDiv.appendChild(img);
                     thumbnailDiv.onclick = (e) => {
                         e.stopPropagation();
-                        openImageComparison(groupIndex, fileInfos);
+                        openImageComparison(groupIndex);
                     };
                 };
                 
