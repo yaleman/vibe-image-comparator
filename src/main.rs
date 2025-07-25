@@ -9,6 +9,7 @@ mod cache;
 mod config;
 mod hasher;
 mod scanner;
+mod server;
 
 use cache::HashCache;
 use config::{load_config, show_config_with_overrides};
@@ -62,9 +63,16 @@ struct Args {
         help = "Show current configuration settings"
     )]
     show_config: bool,
+
+    #[arg(
+        long,
+        help = "Start web server for browser-based interface"
+    )]
+    server: bool,
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let args = Args::parse();
 
     let config = load_config()?;
@@ -73,6 +81,12 @@ fn main() -> Result<()> {
     if args.show_config {
         show_config_with_overrides(args.threshold, args.grid_size)?;
         return Ok(());
+    }
+
+    // Handle server flag
+    if args.server {
+        let config = config.clone();
+        return server::start_server(config, args.threshold, args.grid_size).await;
     }
 
     let cache = HashCache::new(config.database_path.as_deref())?;

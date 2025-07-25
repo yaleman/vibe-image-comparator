@@ -10,7 +10,7 @@ edits, or rotations.
 
 - **CLI**: Uses `clap` for command-line argument parsing
 - **Image Processing**: Uses `image` crate for loading various image formats
-- **Perceptual Hashing**: Uses `img_hash` crate with gradient-based hashing
+- **Perceptual Hashing**: Uses `imghash` crate with Mean-based hashing
   algorithm
 - **File System**: Uses `walkdir` for recursive directory traversal
 
@@ -85,6 +85,12 @@ cargo run -- /path/to/images --threshold 3 --grid-size 32
 # Include hidden directories (starting with .)
 cargo run -- /path/to/images -.
 
+# Enable debug output and skip file validation
+cargo run -- /path/to/images --debug --skip-validation
+
+# Start web server for browser-based interface
+cargo run -- --server
+
 # Clean up cache entries for missing files
 cargo run -- --clean-cache
 
@@ -137,12 +143,19 @@ The tool includes a SQLite-based caching system to speed up repeated scans:
 
 - `clap` - CLI argument parsing
 - `image` - Image loading and processing
-- `img_hash` - Perceptual hashing algorithms
+- `imghash` - Perceptual hashing algorithms
 - `rayon` - Parallel processing for improved performance
 - `rusqlite` - SQLite database for hash caching
 - `sha2` - SHA256 hashing for file integrity
 - `walkdir` - Directory traversal
 - `anyhow` - Error handling
+- `gif` - GIF image format support
+
+### Web Server Dependencies
+
+- `axum` - Modern web framework for HTTP server
+- `tokio` - Async runtime for web server
+- `futures` - Async utilities
 
 ## Hash Algorithm Details
 
@@ -157,7 +170,32 @@ The tool uses a rotation-invariant Mean-based perceptual hash that:
 - Lower threshold values = more strict matching
 - Higher threshold values = more lenient matching
 
+## Web Interface
+
+The tool includes an optional web interface for easier duplicate image management:
+
+- **Browser-based UI**: Modern, responsive interface accessible at `http://localhost:8080`
+- **Folder scanning**: Input multiple paths, configure settings, view real-time progress
+- **Cached matches**: Browse previously found duplicates without rescanning
+- **Configuration display**: Shows current grid size, threshold, and database location
+- **Visual results**: Organized duplicate groups with file paths and counts
+
+### Starting the Web Server
+
+```bash
+# Start web server
+cargo run -- --server
+
+# Or using justfile
+just run-server
+```
+
+The web interface provides the same functionality as the CLI but with a more user-friendly interface for:
+- Setting scan parameters (threshold, grid size, options)
+- Monitoring scan progress
+- Reviewing duplicate results
+- Filtering cached matches by threshold
+
 ## TODOs
 
 - TODO: handle ctrl-c shutdown gracefully
-- TODO: separate simple web interface for reviewing and comparing matches
