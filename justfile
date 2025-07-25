@@ -4,7 +4,9 @@ test:
 lint:
 	cargo clippy --all-features
 
-check: lint test
+check:
+	cargo clippy --all-features || exit 2
+	cargo test || exit 2
 
 run *args:
 	cargo run -- {{args}}

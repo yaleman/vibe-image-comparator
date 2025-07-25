@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::cache::Config;
+use crate::cache::{Config, ResolvedConfig};
 
 pub fn load_config() -> Result<Config> {
     let config_dir =
@@ -30,23 +30,32 @@ pub fn show_config_with_overrides(
 
     println!("=== Configuration ===");
 
-    let effective_grid_size = grid_size_override.unwrap_or(config.grid_size);
-    let effective_threshold = threshold_override.unwrap_or(config.threshold);
+    let effective_config = config.with_overrides(grid_size_override, threshold_override, None);
+    let effective_grid_size = effective_config.grid_size;
+    let effective_threshold = effective_config.threshold;
 
     println!("Grid size: {effective_grid_size}x{effective_grid_size}");
     if let Some(override_val) = grid_size_override {
-        if override_val != config.grid_size {
-            println!(
-                "  (overridden from config default: {}x{})",
-                config.grid_size, config.grid_size
-            );
+        if let Some(config_grid_size) = config.grid_size {
+            if override_val != config_grid_size {
+                println!(
+                    "  (overridden from config default: {}x{})",
+                    config_grid_size, config_grid_size
+                );
+            }
+        } else {
+            println!("  (overridden from default: 128x128)");
         }
     }
 
     println!("Threshold: {effective_threshold}");
     if let Some(override_val) = threshold_override {
-        if override_val != config.threshold {
-            println!("  (overridden from config default: {})", config.threshold);
+        if let Some(config_threshold) = config.threshold {
+            if override_val != config_threshold {
+                println!("  (overridden from config default: {})", config_threshold);
+            }
+        } else {
+            println!("  (overridden from default: 15)");
         }
     }
 

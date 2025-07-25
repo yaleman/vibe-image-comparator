@@ -12,7 +12,7 @@ mod hasher;
 mod scanner;
 mod server;
 
-use cache::HashCache;
+use cache::{HashCache, ResolvedConfig};
 use config::{load_config, show_config_with_overrides};
 use hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
 use scanner::scan_for_images;
@@ -95,7 +95,8 @@ async fn main() -> Result<()> {
         return server::start_server(config, args.threshold, args.grid_size).await;
     }
 
-    let cache = HashCache::new(config.database_path.as_deref())?;
+    let effective_config = config.with_overrides(args.grid_size, args.threshold, None);
+    let cache = HashCache::new(effective_config.database_path.as_deref())?;
 
     if args.clean_missing {
         let (files_removed, hashes_removed) = cache.cleanup_missing_files_and_hashes()?;
@@ -115,7 +116,7 @@ async fn main() -> Result<()> {
 
     // Handle show_matches flag - only show cached duplicates
     if args.show_matches {
-        let threshold = args.threshold.unwrap_or(config.threshold);
+        let threshold = args.threshold.unwrap_or(effective_config.threshold);
         info!("Using threshold: {threshold}");
         info!("Hash caching enabled");
 
@@ -141,8 +142,8 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    let threshold = args.threshold.unwrap_or(config.threshold);
-    let grid_size = args.grid_size.unwrap_or(config.grid_size);
+    let threshold = args.threshold.unwrap_or(effective_config.threshold);
+    let grid_size = args.grid_size.unwrap_or(effective_config.grid_size);
 
     info!("Using grid size: {grid_size}x{grid_size}, threshold: {threshold}");
     info!("Hash caching enabled");
@@ -153,7 +154,7 @@ async fn main() -> Result<()> {
         args.include_hidden,
         args.debug,
         args.skip_validation,
-        &config.ignore_paths,
+        &effective_config.ignore_paths,
     )?;
 
     info!("Found {} images", images.len());

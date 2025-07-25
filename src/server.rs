@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{error, info, instrument, warn};
 
-use crate::cache::{Config, HashCache};
+use crate::cache::{Config, HashCache, ResolvedConfig};
 use crate::hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
 use crate::scanner::scan_for_images;
 
@@ -114,20 +114,25 @@ async fn handle_scan(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, StatusCode> {
-    let cache = HashCache::new(state.config.database_path.as_deref())
+    let effective_config = state.config.with_overrides(
+        state.grid_size_override,
+        state.threshold_override,
+        None,
+    );
+    let cache = HashCache::new(effective_config.database_path.as_deref())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let threshold = request
         .threshold
         .or(state.threshold_override)
-        .unwrap_or(state.config.threshold);
+        .unwrap_or(effective_config.threshold);
     let grid_size = request
         .grid_size
         .or(state.grid_size_override)
-        .unwrap_or(state.config.grid_size);
+        .unwrap_or(effective_config.grid_size);
 
     let paths: Vec<PathBuf> = request.paths.iter().map(PathBuf::from).collect();
-    let ignore_paths = state.config.ignore_paths.clone();
+    let ignore_paths = effective_config.ignore_paths.clone();
 
     // Run the expensive scanning and processing in a blocking task
     let scan_result =
@@ -185,13 +190,18 @@ async fn handle_matches(
     State(state): State<Arc<AppState>>,
     Query(query): Query<MatchesQuery>,
 ) -> Result<Json<MatchesResponse>, StatusCode> {
-    let cache = HashCache::new(state.config.database_path.as_deref())
+    let effective_config = state.config.with_overrides(
+        state.grid_size_override,
+        state.threshold_override,
+        None,
+    );
+    let cache = HashCache::new(effective_config.database_path.as_deref())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let threshold = query
         .threshold
         .or(state.threshold_override)
-        .unwrap_or(state.config.threshold);
+        .unwrap_or(effective_config.threshold);
 
     // Run the expensive computation in a blocking task to avoid blocking the async runtime
     let duplicates = tokio::task::spawn_blocking(move || {
@@ -225,8 +235,8 @@ async fn handle_matches(
 
 async fn handle_config(State(state): State<Arc<AppState>>) -> Json<ConfigResponse> {
     let response = ConfigResponse {
-        grid_size: state.grid_size_override.unwrap_or(state.config.grid_size),
-        threshold: state.threshold_override.unwrap_or(state.config.threshold),
+        grid_size: state.grid_size_override.unwrap_or(state.config.grid_size.unwrap_or(128)),
+        threshold: state.threshold_override.unwrap_or(state.config.threshold.unwrap_or(15)),
         database_path: state.config.database_path.clone(),
     };
 

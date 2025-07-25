@@ -8,20 +8,53 @@ use tracing::{debug, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    pub grid_size: u32,
-    pub threshold: u32,
+    pub grid_size: Option<u32>,
+    pub threshold: Option<u32>,
     pub database_path: Option<String>,
     #[serde(default)]
-    pub ignore_paths: Vec<String>,
+    pub ignore_paths: Option<Vec<String>>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
-            grid_size: 128,
-            threshold: 15,
+            grid_size: Some(128),
+            threshold: Some(15),
             database_path: None,
-            ignore_paths: Vec::new(),
+            ignore_paths: Some(Vec::new()),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedConfig {
+    pub grid_size: u32,
+    pub threshold: u32,
+    pub database_path: Option<String>,
+    pub ignore_paths: Vec<String>,
+}
+
+impl Config {
+    /// Merge this config with defaults and CLI overrides
+    /// Priority: CLI args > config file > defaults
+    /// Always returns concrete values (no None values)
+    pub fn with_overrides(
+        &self,
+        cli_grid_size: Option<u32>,
+        cli_threshold: Option<u32>,
+        cli_database_path: Option<String>,
+    ) -> ResolvedConfig {
+        ResolvedConfig {
+            grid_size: cli_grid_size
+                .or(self.grid_size)
+                .unwrap_or(128),
+            threshold: cli_threshold
+                .or(self.threshold)
+                .unwrap_or(15),
+            database_path: cli_database_path
+                .or_else(|| self.database_path.clone()),
+            ignore_paths: self.ignore_paths.clone()
+                .unwrap_or_default(),
         }
     }
 }
