@@ -214,35 +214,6 @@ impl HashCache {
         Ok(())
     }
 
-    pub fn cleanup_missing_files(&self) -> Result<usize> {
-        let mut stmt = self.conn.prepare("SELECT path FROM files")?;
-        let paths: Vec<String> = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
-
-        let mut deleted = 0;
-        for path_str in paths {
-            let path = PathBuf::from(&path_str);
-            if !path.exists() {
-                self.conn
-                    .execute("DELETE FROM files WHERE path = ?1", params![path_str])?;
-                deleted += 1;
-            }
-        }
-
-        // Clean up orphaned perceptual hashes (not referenced by any files)
-        let orphaned = self.conn.execute(
-            "DELETE FROM perceptual_hashes 
-             WHERE id NOT IN (SELECT DISTINCT perceptual_hash_id FROM files)",
-            [],
-        )?;
-
-        if orphaned > 0 {
-            info!("Cleaned up {orphaned} orphaned perceptual hashes");
-        }
-
-        Ok(deleted)
-    }
 
     pub fn cleanup_missing_files_and_hashes(&self) -> Result<(usize, usize)> {
         info!("Scanning database for missing files...");
@@ -576,6 +547,29 @@ impl HashCache {
         if deleted > 0 {
             info!("Cleared {} cached duplicate groups", deleted);
         }
+        Ok(())
+    }
+
+    /// Completely clear all cache data (files, hashes, duplicate groups)
+    pub fn clear_all_cache(&self) -> Result<()> {
+        info!("Clearing all cache data...");
+        
+        let tx = self.conn.unchecked_transaction()?;
+        
+        // Clear all tables in reverse dependency order
+        let duplicate_groups_deleted = tx.execute("DELETE FROM duplicate_group_files", [])?;
+        let files_deleted = tx.execute("DELETE FROM duplicate_groups", [])?;
+        let perceptual_hashes_deleted = tx.execute("DELETE FROM files", [])?;
+        let _final_deleted = tx.execute("DELETE FROM perceptual_hashes", [])?;
+        
+        tx.commit()?;
+        
+        info!("Cleared all cache data:");
+        info!("  - {} duplicate group files", duplicate_groups_deleted);
+        info!("  - {} duplicate groups", files_deleted);
+        info!("  - {} file entries", perceptual_hashes_deleted);
+        info!("  - All perceptual hashes");
+        
         Ok(())
     }
 }

@@ -90,11 +90,11 @@ cargo run -- /path/to/images --debug --skip-validation
 # Start web server for browser-based interface
 cargo run -- --server
 
-# Clean up cache entries for missing files
-cargo run -- --clean-cache
-
 # Remove missing files and orphaned hashes from database
 cargo run -- --clean-missing
+
+# Completely clear all cache data (files, hashes, duplicate groups)
+cargo run -- --clear-cache
 
 # Show duplicate matches from cache only (no scanning)
 cargo run -- --show-matches --threshold 10

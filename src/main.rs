@@ -34,11 +34,11 @@ struct Args {
     #[arg(short, long, help = "Hash grid size (e.g., 64 for 64x64 grid)")]
     grid_size: Option<u32>,
 
-    #[arg(long, help = "Clean up cache entries for missing files")]
-    clean_cache: bool,
-
     #[arg(long, help = "Remove missing files and orphaned hashes from database")]
     clean_missing: bool,
+
+    #[arg(long, help = "Completely clear all cache data (files, hashes, duplicate groups)")]
+    clear_cache: bool,
 
     #[arg(short = '.', help = "Include hidden directories (starting with .)")]
     include_hidden: bool,
@@ -97,17 +97,17 @@ async fn main() -> Result<()> {
 
     let cache = HashCache::new(config.database_path.as_deref())?;
 
-    if args.clean_cache {
-        let deleted = cache.cleanup_missing_files()?;
-        info!("Cleaned up {deleted} entries from cache");
+    if args.clean_missing {
+        let (files_removed, hashes_removed) = cache.cleanup_missing_files_and_hashes()?;
+        info!("Cleaned up {files_removed} missing files and {hashes_removed} orphaned hashes from database");
         if args.paths.is_empty() {
             return Ok(());
         }
     }
 
-    if args.clean_missing {
-        let (files_removed, hashes_removed) = cache.cleanup_missing_files_and_hashes()?;
-        info!("Cleaned up {files_removed} missing files and {hashes_removed} orphaned hashes from database");
+    if args.clear_cache {
+        cache.clear_all_cache()?;
+        info!("Completely cleared all cache data");
         if args.paths.is_empty() {
             return Ok(());
         }
