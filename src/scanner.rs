@@ -3,6 +3,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
+use tracing::{warn, debug};
 
 pub fn validate_image_format(path: &Path) -> Result<bool> {
     let mut file = fs::File::open(path)?;
@@ -57,7 +58,7 @@ pub fn should_process_image_file(
 ) -> bool {
     // Check if file is accessible (handles broken symlinks)
     if !path.exists() || fs::metadata(path).is_err() {
-        eprintln!("Warning: Skipping inaccessible file: {}", path.display());
+        warn!("Skipping inaccessible file: {}", path.display());
         return false;
     }
 
@@ -71,7 +72,7 @@ pub fn should_process_image_file(
 
     if skip_validation {
         if debug {
-            println!("Found image (validation skipped): {}", path.display());
+            debug!("Found image (validation skipped): {}", path.display());
         }
         return true;
     }
@@ -80,14 +81,14 @@ pub fn should_process_image_file(
     match validate_image_format(path) {
         Ok(true) => {
             if debug {
-                println!("Validated: {}", path.display());
+                debug!("Validated: {}", path.display());
             }
             true
         }
         Ok(false) => {
             if debug {
-                eprintln!(
-                    "Warning: File {} has wrong format for extension {}",
+                warn!(
+                    "File {} has wrong format for extension {}",
                     path.display(),
                     ext.to_string_lossy()
                 );
@@ -96,7 +97,7 @@ pub fn should_process_image_file(
         }
         Err(e) => {
             if debug {
-                eprintln!("Warning: Could not validate {}: {}", path.display(), e);
+                warn!("Could not validate {}: {}", path.display(), e);
             }
             false
         }
@@ -155,7 +156,7 @@ pub fn process_dir(
                 }
             }
             Err(e) => {
-                eprintln!("Warning: Could not access directory entry: {e}");
+                warn!("Could not access directory entry: {e}");
             }
         }
     }

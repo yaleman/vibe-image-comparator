@@ -4,6 +4,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
+use tracing::{info, warn, error};
 
 mod cache;
 mod config;
@@ -79,6 +80,14 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize tracing subscriber
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+        )
+        .init();
+
     let args = Args::parse();
 
     let config = load_config()?;
@@ -99,7 +108,7 @@ async fn main() -> Result<()> {
 
     if args.clean_cache {
         let deleted = cache.cleanup_missing_files()?;
-        println!("Cleaned up {deleted} entries from cache");
+        info!("Cleaned up {deleted} entries from cache");
         if args.paths.is_empty() {
             return Ok(());
         }
@@ -107,7 +116,7 @@ async fn main() -> Result<()> {
 
     if args.clean_missing {
         let (files_removed, hashes_removed) = cache.cleanup_missing_files_and_hashes()?;
-        println!("Cleaned up {files_removed} missing files and {hashes_removed} orphaned hashes from database");
+        info!("Cleaned up {files_removed} missing files and {hashes_removed} orphaned hashes from database");
         if args.paths.is_empty() {
             return Ok(());
         }
@@ -116,19 +125,19 @@ async fn main() -> Result<()> {
     // Handle show_matches flag - only show cached duplicates
     if args.show_matches {
         let threshold = args.threshold.unwrap_or(config.threshold);
-        println!("Using threshold: {threshold}");
-        println!("Hash caching enabled");
+        info!("Using threshold: {threshold}");
+        info!("Hash caching enabled");
         
         let duplicates = get_duplicates_from_cache(&cache, threshold)?;
         
         if duplicates.is_empty() {
-            println!("No duplicate images found in cache");
+            info!("No duplicate images found in cache");
         } else {
-            println!("Found {} duplicate sets in cache:", duplicates.len());
+            info!("Found {} duplicate sets in cache:", duplicates.len());
             for (i, group) in duplicates.iter().enumerate() {
-                println!("  Group {}:", i + 1);
+                info!("  Group {}:", i + 1);
                 for path in group {
-                    println!("    {}", path.display());
+                    info!("    {}", path.display());
                 }
             }
         }
@@ -137,17 +146,17 @@ async fn main() -> Result<()> {
     }
 
     if args.paths.is_empty() {
-        eprintln!("Error: Please provide at least one path to scan");
+        error!("Please provide at least one path to scan");
         std::process::exit(1);
     }
 
     let threshold = args.threshold.unwrap_or(config.threshold);
     let grid_size = args.grid_size.unwrap_or(config.grid_size);
 
-    println!("Using grid size: {grid_size}x{grid_size}, threshold: {threshold}");
-    println!("Hash caching enabled");
+    info!("Using grid size: {grid_size}x{grid_size}, threshold: {threshold}");
+    info!("Hash caching enabled");
 
-    println!("Scanning paths for images...");
+    info!("Scanning paths for images...");
     let images = scan_for_images(
         &args.paths,
         args.include_hidden,
@@ -155,22 +164,27 @@ async fn main() -> Result<()> {
         args.skip_validation,
     )?;
 
-    println!("Found {} images", images.len());
-    println!("Generating perceptual hashes...");
+    info!("Found {} images", images.len());
+    info!("Generating perceptual hashes...");
 
     let hashes = generate_hashes_with_cache(&images, grid_size, &cache, args.debug)?;
 
-    println!("Finding duplicate sets...");
+    info!("Finding duplicate sets...");
     let duplicates = find_duplicates(&hashes, threshold);
 
+    // Cache the duplicate groups for future use
+    if let Err(e) = cache.store_duplicate_groups(threshold, &duplicates) {
+        warn!("Failed to cache duplicate groups: {}", e);
+    }
+
     if duplicates.is_empty() {
-        println!("No duplicate images found");
+        info!("No duplicate images found");
     } else {
-        println!("Found {} duplicate sets:", duplicates.len());
+        info!("Found {} duplicate sets:", duplicates.len());
         for (i, group) in duplicates.iter().enumerate() {
-            println!("  Group {}:", i + 1);
+            info!("  Group {}:", i + 1);
             for path in group {
-                println!("    {}", path.display());
+                info!("    {}", path.display());
             }
         }
     }

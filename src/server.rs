@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
+use tracing::{info, warn};
 
 use crate::cache::{Config, HashCache};
 use crate::hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
@@ -96,8 +97,8 @@ pub async fn start_server(
         .with_state(Arc::new(state));
 
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
-    println!("🌐 Web server running at http://127.0.0.1:8080");
-    println!("Press Ctrl+C to stop the server");
+    info!("🌐 Web server running at http://127.0.0.1:8080");
+    info!("Press Ctrl+C to stop the server");
 
     axum::serve(listener, app).await?;
     Ok(())
@@ -137,6 +138,11 @@ async fn handle_scan(
         let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)?;
 
         let duplicates = find_duplicates(&hashes, threshold);
+
+        // Cache the duplicate groups for future use
+        if let Err(e) = cache.store_duplicate_groups(threshold, &duplicates) {
+            warn!("Failed to cache duplicate groups: {}", e);
+        }
 
         let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
             .iter()

@@ -4,6 +4,7 @@ use rayon::prelude::*;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tracing::{info, warn, debug};
 
 use crate::cache::{FileMetadata, HashCache};
 
@@ -72,8 +73,8 @@ pub fn generate_hashes_with_cache(
                 sha256,
             }),
             Err(e) => {
-                eprintln!(
-                    "Warning: Could not get metadata for {} (possibly broken symlink): {}",
+                warn!(
+                    "Could not get metadata for {} (possibly broken symlink): {}",
                     image_path.display(),
                     e
                 );
@@ -95,14 +96,14 @@ pub fn generate_hashes_with_cache(
             match ImageHash::decode(&hash_string, 8, 8) {
                 Ok(hash) => {
                     if debug {
-                        println!("Cache hit: {}", metadata.path.display());
+                        debug!("Cache hit: {}", metadata.path.display());
                     }
                     hashes.push((metadata.path, hash));
                     cache_hits += 1;
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Warning: Invalid cached hash format for {}: {}",
+                    warn!(
+                        "Invalid cached hash format for {}: {}",
                         metadata.path.display(),
                         e
                     );
@@ -125,7 +126,7 @@ pub fn generate_hashes_with_cache(
             .par_iter()
             .map(|metadata| {
                 if debug {
-                    println!("Processing: {}", metadata.path.display());
+                    debug!("Processing: {}", metadata.path.display());
                 }
 
                 match image::open(&metadata.path) {
@@ -140,8 +141,8 @@ pub fn generate_hashes_with_cache(
                             Ok((metadata.path.clone(), hash, Some(file_metadata)))
                         }
                         Err(e) => {
-                            eprintln!(
-                                "Warning: Could not generate hash for {}: {}",
+                            warn!(
+                                "Could not generate hash for {}: {}",
                                 metadata.path.display(),
                                 e
                             );
@@ -161,13 +162,13 @@ pub fn generate_hashes_with_cache(
                         };
 
                         if debug {
-                            eprintln!(
-                                "Warning: Could not open {}: {}",
+                            debug!(
+                                "Could not open {}: {}",
                                 metadata.path.display(),
                                 error_msg
                             );
                         } else {
-                            eprintln!("Warning: Skipping {}: {}", metadata.path.display(), error_msg);
+                            warn!("Skipping {}: {}", metadata.path.display(), error_msg);
                         }
 
                         Err(metadata.path.clone())
@@ -182,8 +183,8 @@ pub fn generate_hashes_with_cache(
                 Ok((image_path, hash, metadata_opt)) => {
                     if let Some(metadata) = metadata_opt {
                         if let Err(e) = cache.store_hash(&metadata) {
-                            eprintln!(
-                                "Warning: Could not cache hash for {}: {}",
+                            warn!(
+                                "Could not cache hash for {}: {}",
                                 image_path.display(),
                                 e
                             );
@@ -195,7 +196,7 @@ pub fn generate_hashes_with_cache(
                 Err(image_path) => {
                     // Remove broken file from cache if it exists
                     if let Err(cache_err) = cache.remove_file_entry(&image_path) {
-                        eprintln!("Warning: Could not remove broken file from cache: {cache_err}");
+                        warn!("Could not remove broken file from cache: {cache_err}");
                     }
                 }
             }
@@ -203,7 +204,7 @@ pub fn generate_hashes_with_cache(
     }
 
     if cache_hits > 0 || cache_misses > 0 {
-        println!("Cache stats: {cache_hits} hits, {cache_misses} misses");
+        info!("Cache stats: {cache_hits} hits, {cache_misses} misses");
     }
 
     Ok(hashes)
@@ -257,15 +258,24 @@ pub fn find_duplicates(hashes: &[(PathBuf, ImageHash)], threshold: u32) -> Vec<V
 }
 
 pub fn get_duplicates_from_cache(cache: &HashCache, threshold: u32) -> Result<Vec<Vec<PathBuf>>> {
-    println!("Retrieving hashes from cache...");
+    info!("Checking for cached duplicate groups...");
+    
+    // Try to get pre-computed duplicate groups from cache
+    if let Some(cached_duplicates) = cache.get_cached_duplicate_groups(threshold)? {
+        info!("Using cached duplicate groups");
+        return Ok(cached_duplicates);
+    }
+    
+    info!("No cached duplicate groups found, computing from hash cache...");
+    info!("Retrieving hashes from cache...");
     let cached_data = cache.get_all_cached_hashes()?;
     
     if cached_data.is_empty() {
-        println!("No cached hashes found");
+        info!("No cached hashes found");
         return Ok(Vec::new());
     }
 
-    println!("Found {} cached entries", cached_data.len());
+    info!("Found {} cached entries", cached_data.len());
     
     // Convert cached data to (PathBuf, ImageHash) tuples
     let mut hashes = Vec::new();
@@ -278,20 +288,25 @@ pub fn get_duplicates_from_cache(cache: &HashCache, threshold: u32) -> Result<Ve
                 hashes.push((path, hash));
             }
             Err(e) => {
-                eprintln!("Warning: Could not decode hash for {}: {}", path.display(), e);
+                warn!("Could not decode hash for {}: {}", path.display(), e);
                 failed_conversions += 1;
             }
         }
     }
     
     if failed_conversions > 0 {
-        println!("Warning: Failed to convert {failed_conversions} cached entries");
+        warn!("Failed to convert {failed_conversions} cached entries");
     }
     
-    println!("Processing {} valid cached hashes for duplicates...", hashes.len());
+    info!("Processing {} valid cached hashes for duplicates...", hashes.len());
     
     // Find duplicates using the existing function
     let duplicates = find_duplicates(&hashes, threshold);
+    
+    // Cache the computed duplicate groups for future use
+    if let Err(e) = cache.store_duplicate_groups(threshold, &duplicates) {
+        warn!("Failed to cache duplicate groups: {}", e);
+    }
     
     Ok(duplicates)
 }
