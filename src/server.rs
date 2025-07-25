@@ -1,8 +1,8 @@
 use anyhow::Result;
 use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::{Html, Json},
+    extract::{Path, Query, State},
+    http::{header, StatusCode},
+    response::{Html, Json, Response},
     routing::{get, post},
     Router,
 };
@@ -75,6 +75,7 @@ pub async fn start_server(
         .route("/api/scan", post(handle_scan))
         .route("/api/matches", get(handle_matches))
         .route("/api/config", get(handle_config))
+        .route("/api/image/{*path}", get(serve_image))
         .with_state(Arc::new(state));
 
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
@@ -176,4 +177,50 @@ async fn handle_config(State(state): State<Arc<AppState>>) -> Json<ConfigRespons
     };
 
     Json(response)
+}
+
+async fn serve_image(Path(image_path): Path<String>) -> Result<Response, StatusCode> {
+    // Remove leading slash if present
+    let clean_path = image_path.strip_prefix('/').unwrap_or(&image_path);
+    let file_path = std::path::Path::new(clean_path);
+    
+    // Security check: ensure the path is absolute and exists
+    if !file_path.is_absolute() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    
+    if !file_path.exists() {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    
+    // Check if it's actually a file (not a directory)
+    if !file_path.is_file() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    
+    // Read the image file
+    let image_data = match tokio::fs::read(file_path).await {
+        Ok(data) => data,
+        Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
+    };
+    
+    // Determine content type based on file extension
+    let content_type = match file_path.extension().and_then(|ext| ext.to_str()) {
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("png") => "image/png",
+        Some("gif") => "image/gif",
+        Some("webp") => "image/webp",
+        Some("bmp") => "image/bmp",
+        Some("tiff") | Some("tif") => "image/tiff",
+        _ => "application/octet-stream",
+    };
+    
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::CACHE_CONTROL, "public, max-age=3600") // Cache for 1 hour
+        .body(image_data.into())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    Ok(response)
 }
