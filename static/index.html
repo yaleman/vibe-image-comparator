@@ -255,6 +255,40 @@
             color: #e74c3c;
         }
 
+        .file-missing {
+            color: #e74c3c;
+            background-color: #fadbd8;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+            text-decoration: line-through;
+        }
+
+        .missing-indicator {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 2px 6px;
+            background: #e74c3c;
+            color: white;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .thumbnail-missing {
+            width: 60px;
+            height: 60px;
+            background: #fadbd8;
+            border: 2px solid #e74c3c;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 16px;
+            color: #e74c3c;
+            cursor: default;
+        }
+
         .error {
             background: #fadbd8;
             color: #c0392b;
@@ -697,16 +731,25 @@
             if (result.duplicates && result.duplicates.length > 0) {
                 html += '<h3>Duplicate Groups:</h3>';
                 result.duplicates.forEach((group, index) => {
+                    const missingCount = group.filter(file => !file.exists).length;
+                    const existingCount = group.filter(file => file.exists).length;
+                    
                     html += `
                         <div class="duplicate-group" onclick="openImageComparison(${index}, ${JSON.stringify(group).replace(/"/g, '&quot;')})">
                             <h4>
                                 Group ${index + 1} (${group.length} files)
+                                ${missingCount > 0 ? `<span class="missing-indicator">${missingCount} missing</span>` : ''}
                                 <button class="view-comparison-btn" onclick="event.stopPropagation(); openImageComparison(${index}, ${JSON.stringify(group).replace(/"/g, '&quot;')})">
                                     👁️ Compare
                                 </button>
                             </h4>
                             <ul class="file-list">
-                                ${group.map(file => `<li>${file}</li>`).join('')}
+                                ${group.map(file => `
+                                    <li class="${!file.exists ? 'file-missing' : ''}">
+                                        ${file.path}
+                                        ${!file.exists ? '<span class="missing-indicator">MISSING</span>' : ''}
+                                    </li>
+                                `).join('')}
                             </ul>
                             <div class="thumbnail-preview" id="thumbnails-${index}">
                                 <!-- Thumbnails will be loaded here -->
@@ -729,39 +772,54 @@
             results.classList.remove('hide');
         }
 
-        function openImageComparison(groupIndex, imagePaths) {
+        function openImageComparison(groupIndex, fileInfos) {
             const modal = document.getElementById('image-modal');
             const modalTitle = document.getElementById('modal-title');
             const imageComparison = document.getElementById('image-comparison');
             
-            modalTitle.textContent = `Compare Duplicate Images - Group ${groupIndex + 1}`;
+            const missingCount = fileInfos.filter(file => !file.exists).length;
+            modalTitle.textContent = `Compare Duplicate Images - Group ${groupIndex + 1}${missingCount > 0 ? ` (${missingCount} missing)` : ''}`;
             
             // Clear previous content
             imageComparison.innerHTML = '';
             
             // Create image containers for each file
-            imagePaths.forEach((imagePath, index) => {
+            fileInfos.forEach((fileInfo, index) => {
                 const imageItem = document.createElement('div');
                 imageItem.className = 'image-item';
                 
                 const imageContainer = document.createElement('div');
                 imageContainer.className = 'image-container';
                 
-                const loadingDiv = document.createElement('div');
-                loadingDiv.className = 'image-loading';
-                loadingDiv.textContent = '⏳ Loading...';
-                imageContainer.appendChild(loadingDiv);
+                // Show different states based on file existence
+                if (!fileInfo.exists) {
+                    const missingDiv = document.createElement('div');
+                    missingDiv.className = 'image-error';
+                    missingDiv.innerHTML = `
+                        <div>📂 File Missing</div>
+                        <div style="font-size: 11px; margin-top: 5px;">${fileInfo.path}</div>
+                    `;
+                    imageContainer.appendChild(missingDiv);
+                } else {
+                    const loadingDiv = document.createElement('div');
+                    loadingDiv.className = 'image-loading';
+                    loadingDiv.textContent = '⏳ Loading...';
+                    imageContainer.appendChild(loadingDiv);
+                    
+                    // Load the image
+                    loadImage(fileInfo.path, imageContainer);
+                }
                 
                 const imageInfo = document.createElement('div');
                 imageInfo.className = 'image-info';
                 
                 const filename = document.createElement('div');
-                filename.className = 'image-filename';
-                filename.textContent = imagePath.split('/').pop();
+                filename.className = `image-filename${!fileInfo.exists ? ' file-missing' : ''}`;
+                filename.textContent = fileInfo.path.split('/').pop();
                 
                 const details = document.createElement('div');
-                details.className = 'image-details';
-                details.textContent = imagePath;
+                details.className = `image-details${!fileInfo.exists ? ' file-missing' : ''}`;
+                details.innerHTML = `${fileInfo.path}${!fileInfo.exists ? ' <span class="missing-indicator">MISSING</span>' : ''}`;
                 
                 imageInfo.appendChild(filename);
                 imageInfo.appendChild(details);
@@ -769,9 +827,6 @@
                 imageItem.appendChild(imageContainer);
                 imageItem.appendChild(imageInfo);
                 imageComparison.appendChild(imageItem);
-                
-                // Load the image
-                loadImage(imagePath, imageContainer);
             });
             
             modal.classList.add('show');
@@ -819,14 +874,25 @@
             }
         });
 
-        function loadThumbnails(imagePaths, groupIndex) {
+        function loadThumbnails(fileInfos, groupIndex) {
             const thumbnailContainer = document.getElementById(`thumbnails-${groupIndex}`);
             if (!thumbnailContainer) return;
             
             thumbnailContainer.innerHTML = '';
             
-            imagePaths.forEach((imagePath, imageIndex) => {
+            fileInfos.forEach((fileInfo, imageIndex) => {
                 const thumbnailDiv = document.createElement('div');
+                
+                // If file doesn't exist, show missing state immediately
+                if (!fileInfo.exists) {
+                    thumbnailDiv.className = 'thumbnail-missing';
+                    thumbnailDiv.textContent = '📂';
+                    thumbnailDiv.title = `File missing: ${fileInfo.path}`;
+                    thumbnailContainer.appendChild(thumbnailDiv);
+                    return;
+                }
+                
+                // File exists, try to load thumbnail
                 thumbnailDiv.className = 'thumbnail-loading';
                 thumbnailDiv.textContent = '⏳';
                 thumbnailContainer.appendChild(thumbnailDiv);
@@ -839,18 +905,18 @@
                     thumbnailDiv.appendChild(img);
                     thumbnailDiv.onclick = (e) => {
                         e.stopPropagation();
-                        openImageComparison(groupIndex, imagePaths);
+                        openImageComparison(groupIndex, fileInfos);
                     };
                 };
                 
                 img.onerror = function() {
                     thumbnailDiv.className = 'thumbnail-error';
                     thumbnailDiv.textContent = '❌';
-                    thumbnailDiv.title = `Failed to load: ${imagePath}`;
+                    thumbnailDiv.title = `Failed to load: ${fileInfo.path}`;
                 };
                 
                 img.className = 'thumbnail';
-                const encodedPath = encodeURIComponent(imagePath);
+                const encodedPath = encodeURIComponent(fileInfo.path);
                 img.src = `/api/image/${encodedPath}`;
             });
         }

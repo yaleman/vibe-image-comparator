@@ -33,11 +33,17 @@ pub struct ScanRequest {
 }
 
 #[derive(Serialize)]
+pub struct FileInfo {
+    path: String,
+    exists: bool,
+}
+
+#[derive(Serialize)]
 pub struct ScanResponse {
     success: bool,
     message: String,
     duplicate_count: usize,
-    duplicates: Vec<Vec<String>>,
+    duplicates: Vec<Vec<FileInfo>>,
 }
 
 #[derive(Deserialize)]
@@ -48,7 +54,7 @@ pub struct MatchesQuery {
 #[derive(Serialize)]
 pub struct MatchesResponse {
     success: bool,
-    duplicates: Vec<Vec<String>>,
+    duplicates: Vec<Vec<FileInfo>>,
     threshold: u32,
 }
 
@@ -121,9 +127,17 @@ async fn handle_scan(
 
     let duplicates = find_duplicates(&hashes, threshold);
 
-    let duplicate_strings: Vec<Vec<String>> = duplicates
+    let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
         .iter()
-        .map(|group| group.iter().map(|p| p.display().to_string()).collect())
+        .map(|group| {
+            group
+                .iter()
+                .map(|p| FileInfo {
+                    path: p.display().to_string(),
+                    exists: p.exists(),
+                })
+                .collect()
+        })
         .collect();
 
     let response = ScanResponse {
@@ -134,7 +148,7 @@ async fn handle_scan(
             duplicates.len()
         ),
         duplicate_count: duplicates.len(),
-        duplicates: duplicate_strings,
+        duplicates: duplicate_file_infos,
     };
 
     Ok(Json(response))
@@ -155,14 +169,22 @@ async fn handle_matches(
     let duplicates = get_duplicates_from_cache(&cache, threshold)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let duplicate_strings: Vec<Vec<String>> = duplicates
+    let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
         .iter()
-        .map(|group| group.iter().map(|p| p.display().to_string()).collect())
+        .map(|group| {
+            group
+                .iter()
+                .map(|p| FileInfo {
+                    path: p.display().to_string(),
+                    exists: p.exists(),
+                })
+                .collect()
+        })
         .collect();
 
     let response = MatchesResponse {
         success: true,
-        duplicates: duplicate_strings,
+        duplicates: duplicate_file_infos,
         threshold,
     };
 
