@@ -233,13 +233,20 @@ async fn handle_config(State(state): State<Arc<AppState>>) -> Json<ConfigRespons
 
 #[instrument(level = "info")]
 async fn serve_image(Path(image_path): Path<String>) -> Result<Response, StatusCode> {
-    // Remove leading slash if present
+    // URL decode the path first
+    let decoded_path = match urlencoding::decode(&image_path) {
+        Ok(path) => path.to_string(),
+        Err(e) => {
+            error!("Failed to decode URL path '{}': {}", image_path, e);
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    };
 
-    let file_path = std::path::Path::new(&image_path);
+    let file_path = std::path::Path::new(&decoded_path);
 
     // Security check: ensure the path is absolute and exists
     if !file_path.is_absolute() {
-        info!("Requested path is not a file: {}", file_path.display());
+        error!("Requested path is not absolute: {}", file_path.display());
         return Err(StatusCode::BAD_REQUEST);
     }
 
