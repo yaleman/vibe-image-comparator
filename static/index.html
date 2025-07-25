@@ -1,10 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vibe Image Comparator</title>
-    <style>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Vibe Image Comparator</title>
+        <style>
         * {
             margin: 0;
             padding: 0;
@@ -493,115 +493,140 @@
             .form-row {
                 grid-template-columns: 1fr;
             }
-            
+
             .checkbox-group {
                 flex-direction: column;
                 align-items: flex-start;
             }
         }
     </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>🖼️ Vibe Image Comparator</h1>
-            <p class="subtitle">Find duplicate images using perceptual hashing</p>
-        </header>
+    </head>
+    <body>
+        <div class="container">
+            <header>
+                <h1>🖼️ Vibe Image Comparator</h1>
+                <p class="subtitle">Find duplicate images using perceptual
+                    hashing</p>
+            </header>
 
-        <div class="tabs">
-            <button class="tab" onclick="switchTab('scan')">Scan Folders</button>
-            <button class="tab active" onclick="switchTab('matches')">View Cached Matches</button>
-        </div>
-
-        <div id="scan-tab" class="tab-content" style="display: none;">
-            <div id="config-info" class="config-info">
-                <h3>Current Configuration</h3>
-                <div id="config-details"></div>
+            <div class="tabs">
+                <button class="tab" onclick="switchTab('scan')">Scan
+                    Folders</button>
+                <button class="tab active" onclick="switchTab('matches')">View
+                    Cached Matches</button>
             </div>
 
-            <form id="scan-form">
+            <div id="scan-tab" class="tab-content" style="display: none;">
+                <div id="config-info" class="config-info">
+                    <h3>Current Configuration</h3>
+                    <div id="config-details"></div>
+                </div>
+
+                <form id="scan-form">
+                    <div class="form-group">
+                        <label for="scan-paths">Folder Paths to Scan (one per
+                            line):</label>
+                        <textarea id="scan-paths"
+                            placeholder="/path/to/images&#10;/another/path/to/scan"
+                            required></textarea>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="scan-threshold">Similarity Threshold
+                                (0-64, lower = more similar):</label>
+                            <input type="number" id="scan-threshold" min="0"
+                                max="64"
+                                placeholder="Leave empty to use config default">
+                        </div>
+                        <div class="form-group">
+                            <label for="scan-grid-size">Hash Grid Size (e.g., 64
+                                for 64x64):</label>
+                            <input type="number" id="scan-grid-size" min="8"
+                                max="256"
+                                placeholder="Leave empty to use config default">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <div class="checkbox-group">
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="include-hidden">
+                                <label for="include-hidden">Include hidden
+                                    directories</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="debug-mode">
+                                <label for="debug-mode">Debug mode</label>
+                            </div>
+                            <div class="checkbox-item">
+                                <input type="checkbox" id="skip-validation">
+                                <label for="skip-validation">Skip file
+                                    validation</label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="btn" id="scan-btn">Start
+                        Scan</button>
+                </form>
+
+                <div id="scan-loading" class="loading">
+                    <p>⏳ Scanning for images and generating hashes...</p>
+                    <p>This may take a while depending on the number of
+                        images.</p>
+                </div>
+            </div>
+
+            <div id="matches-tab" class="tab-content">
+                <p
+                    style="margin-bottom: 20px; color: #7f8c8d; font-style: italic;">
+                    Cached matches are loaded automatically. Use the controls
+                    below to adjust the threshold or reload.
+                </p>
                 <div class="form-group">
-                    <label for="scan-paths">Folder Paths to Scan (one per line):</label>
-                    <textarea id="scan-paths" placeholder="/path/to/images&#10;/another/path/to/scan" required></textarea>
-                </div>
-
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="scan-threshold">Similarity Threshold (0-64, lower = more similar):</label>
-                        <input type="number" id="scan-threshold" min="0" max="64" placeholder="Leave empty to use config default">
-                    </div>
-                    <div class="form-group">
-                        <label for="scan-grid-size">Hash Grid Size (e.g., 64 for 64x64):</label>
-                        <input type="number" id="scan-grid-size" min="8" max="256" placeholder="Leave empty to use config default">
-                    </div>
-                </div>
-
-                <div class="form-group">
-                    <div class="checkbox-group">
-                        <div class="checkbox-item">
-                            <input type="checkbox" id="include-hidden">
-                            <label for="include-hidden">Include hidden directories</label>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="matches-threshold">Similarity Threshold
+                                (0-64, lower = more similar):</label>
+                            <input type="number" id="matches-threshold" min="0"
+                                max="64"
+                                placeholder="Leave empty to use config default">
                         </div>
-                        <div class="checkbox-item">
-                            <input type="checkbox" id="debug-mode">
-                            <label for="debug-mode">Debug mode</label>
-                        </div>
-                        <div class="checkbox-item">
-                            <input type="checkbox" id="skip-validation">
-                            <label for="skip-validation">Skip file validation</label>
+                        <div>
+                            <button type="button" class="btn"
+                                onclick="loadMatches()">Reload Cached
+                                Matches</button>
                         </div>
                     </div>
                 </div>
 
-                <button type="submit" class="btn" id="scan-btn">Start Scan</button>
-            </form>
-
-            <div id="scan-loading" class="loading">
-                <p>⏳ Scanning for images and generating hashes...</p>
-                <p>This may take a while depending on the number of images.</p>
+                <div id="matches-loading" class="loading show">
+                    <p>⏳ Loading cached duplicate matches...</p>
+                </div>
             </div>
-        </div>
 
-        <div id="matches-tab" class="tab-content">
-            <p style="margin-bottom: 20px; color: #7f8c8d; font-style: italic;">
-                Cached matches are loaded automatically. Use the controls below to adjust the threshold or reload.
-            </p>
-            <div class="form-group">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="matches-threshold">Similarity Threshold (0-64, lower = more similar):</label>
-                        <input type="number" id="matches-threshold" min="0" max="64" placeholder="Leave empty to use config default">
+            <div id="results" class="results hide">
+                <div id="results-content"></div>
+            </div>
+
+            <!-- Image Comparison Modal -->
+            <div id="image-modal" class="modal">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h2 class="modal-title" id="modal-title">Compare
+                            Images</h2>
+                        <button class="close-btn"
+                            onclick="closeImageModal()">&times;</button>
                     </div>
-                    <div>
-                        <button type="button" class="btn" onclick="loadMatches()">Reload Cached Matches</button>
+                    <div id="image-comparison" class="image-comparison">
+                        <!-- Images will be dynamically loaded here -->
                     </div>
                 </div>
             </div>
-
-            <div id="matches-loading" class="loading show">
-                <p>⏳ Loading cached duplicate matches...</p>
-            </div>
         </div>
 
-        <div id="results" class="results hide">
-            <div id="results-content"></div>
-        </div>
-
-        <!-- Image Comparison Modal -->
-        <div id="image-modal" class="modal">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h2 class="modal-title" id="modal-title">Compare Images</h2>
-                    <button class="close-btn" onclick="closeImageModal()">&times;</button>
-                </div>
-                <div id="image-comparison" class="image-comparison">
-                    <!-- Images will be dynamically loaded here -->
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
+        <script>
         let currentConfig = {};
         let duplicateGroups = []; // Store duplicate groups globally
 
@@ -616,7 +641,7 @@
                 const response = await fetch('/api/config');
                 const config = await response.json();
                 currentConfig = config;
-                
+
                 const configDetails = document.getElementById('config-details');
                 configDetails.innerHTML = `
                     <div class="config-detail"><strong>Grid Size:</strong> ${config.grid_size}x${config.grid_size}</div>
@@ -645,7 +670,7 @@
 
         document.getElementById('scan-form').addEventListener('submit', async function(e) {
             e.preventDefault();
-            
+
             const paths = document.getElementById('scan-paths').value.trim().split('\n').filter(p => p.trim());
             const threshold = document.getElementById('scan-threshold').value;
             const gridSize = document.getElementById('scan-grid-size').value;
@@ -683,7 +708,7 @@
                 });
 
                 const result = await response.json();
-                
+
                 if (result.success) {
                     showResults(result);
                 } else {
@@ -706,10 +731,10 @@
             results.classList.add('hide');
 
             try {
-                const url = threshold ? `/api/matches?threshold=${threshold}` : '/api/matches';
+                const url = threshold ? `/api/matches?threshold=${threshold}&count=100` : '/api/matches?count=100';
                 const response = await fetch(url);
                 const result = await response.json();
-                
+
                 if (result.success) {
                     showResults({
                         success: true,
@@ -730,12 +755,12 @@
         function showResults(result) {
             const results = document.getElementById('results');
             const content = document.getElementById('results-content');
-            
+
             // Store the duplicate groups globally
             duplicateGroups = result.duplicates || [];
-            
+
             let html = `<div class="success">${result.message}</div>`;
-            
+
             if (result.duplicates && result.duplicates.length > 0) {
                 html += '<h3>Duplicate Groups:</h3>';
                 result.duplicates.forEach((group, index) => {
@@ -764,7 +789,7 @@
             } else {
                 html += '<p>No duplicate images found.</p>';
             }
-            
+
             content.innerHTML = html;
             results.classList.remove('hide');
         }
@@ -772,10 +797,10 @@
         async function loadGroupThumbnails(groupIndex) {
             if (!duplicateGroups[groupIndex]) return;
             const fileInfos = duplicateGroups[groupIndex];
-            
+
             // First check file existence for this group
             await checkGroupFileExistence(fileInfos, groupIndex);
-            
+
             // Then load thumbnails
             loadThumbnails(fileInfos, groupIndex);
         }
@@ -783,29 +808,29 @@
         function openImageComparison(groupIndex) {
             if (!duplicateGroups[groupIndex]) return;
             const fileInfos = duplicateGroups[groupIndex];
-            
+
             const modal = document.getElementById('image-modal');
             const modalTitle = document.getElementById('modal-title');
             const imageComparison = document.getElementById('image-comparison');
-            
+
             // Load thumbnails for this group if not already loaded (for better UX)
             loadGroupThumbnails(groupIndex);
-            
-            // Check if we have existence info yet (exists property may not be accurate initially)  
+
+            // Check if we have existence info yet (exists property may not be accurate initially)
             const missingCount = fileInfos.filter(file => file.exists === false).length;
             modalTitle.textContent = `Compare Duplicate Images - Group ${groupIndex + 1}${missingCount > 0 ? ` (${missingCount} missing)` : ''}`;
-            
+
             // Clear previous content
             imageComparison.innerHTML = '';
-            
+
             // Create image containers for each file
             fileInfos.forEach((fileInfo, index) => {
                 const imageItem = document.createElement('div');
                 imageItem.className = 'image-item';
-                
+
                 const imageContainer = document.createElement('div');
                 imageContainer.className = 'image-container';
-                
+
                 // Show different states based on file existence
                 if (fileInfo.exists === false) {
                     const missingDiv = document.createElement('div');
@@ -820,42 +845,42 @@
                     loadingDiv.className = 'image-loading';
                     loadingDiv.textContent = '⏳ Loading...';
                     imageContainer.appendChild(loadingDiv);
-                    
+
                     // Load the image
                     loadImage(fileInfo.path, imageContainer);
                 }
-                
+
                 const imageInfo = document.createElement('div');
                 imageInfo.className = 'image-info';
-                
+
                 const filename = document.createElement('div');
                 filename.className = `image-filename${fileInfo.exists === false ? ' file-missing' : ''}`;
                 filename.textContent = fileInfo.path.split('/').pop();
-                
+
                 const details = document.createElement('div');
                 details.className = `image-details${fileInfo.exists === false ? ' file-missing' : ''}`;
                 details.innerHTML = `${fileInfo.path}${fileInfo.exists === false ? ' <span class="missing-indicator">MISSING</span>' : ''}`;
-                
+
                 imageInfo.appendChild(filename);
                 imageInfo.appendChild(details);
-                
+
                 imageItem.appendChild(imageContainer);
                 imageItem.appendChild(imageInfo);
                 imageComparison.appendChild(imageItem);
             });
-            
+
             modal.classList.add('show');
         }
 
         function loadImage(imagePath, container) {
             const img = new Image();
-            
+
             img.onload = function() {
                 container.innerHTML = '';
                 img.className = 'comparison-image';
                 container.appendChild(img);
             };
-            
+
             img.onerror = function() {
                 container.innerHTML = `
                     <div class="image-error">
@@ -864,7 +889,7 @@
                     </div>
                 `;
             };
-            
+
             // Encode the path for URL safety
             const encodedPath = encodeURIComponent(imagePath);
             img.src = `/api/image/${encodedPath}`;
@@ -900,29 +925,29 @@
                     },
                     body: JSON.stringify({ paths: paths }),
                 });
-                
+
                 if (!response.ok) {
                     console.error('Failed to check file existence');
                     return;
                 }
-                
+
                 const result = await response.json();
                 const fileStatusMap = new Map();
                 result.files.forEach(file => {
                     fileStatusMap.set(file.path, file.exists);
                 });
-                
+
                 // Update the group data with actual existence status
                 group.forEach(file => {
                     file.exists = fileStatusMap.get(file.path) || false;
                 });
-                
+
                 // Update the UI to show missing files
                 updateGroupUI(group, groupIndex);
-                
+
                 // Load thumbnails now that we know file status
                 loadThumbnails(group, groupIndex);
-                
+
             } catch (error) {
                 console.error('Error checking file existence:', error);
                 // Fallback: assume all files exist and load thumbnails
@@ -932,7 +957,7 @@
 
         function updateGroupUI(group, groupIndex) {
             const missingCount = group.filter(file => !file.exists).length;
-            
+
             // Update group header
             const groupElement = document.querySelector(`[onclick*="openImageComparison(${groupIndex}"]`);
             if (groupElement) {
@@ -946,7 +971,7 @@
                         h4.insertBefore(missingIndicator, h4.querySelector('.view-comparison-btn'));
                     }
                 }
-                
+
                 // Update file list
                 const fileList = groupElement.querySelector('.file-list');
                 if (fileList) {
@@ -971,17 +996,17 @@
         function loadThumbnails(fileInfos, groupIndex) {
             const thumbnailContainer = document.getElementById(`thumbnails-${groupIndex}`);
             if (!thumbnailContainer) return;
-            
+
             // Check if thumbnails are already loaded (avoid reloading)
             if (thumbnailContainer.querySelector('.thumbnail') || thumbnailContainer.querySelector('.thumbnail-loading')) {
                 return;
             }
-            
+
             thumbnailContainer.innerHTML = '';
-            
+
             fileInfos.forEach((fileInfo, imageIndex) => {
                 const thumbnailDiv = document.createElement('div');
-                
+
                 // If file doesn't exist, show missing state immediately
                 if (!fileInfo.exists) {
                     thumbnailDiv.className = 'thumbnail-missing';
@@ -990,14 +1015,14 @@
                     thumbnailContainer.appendChild(thumbnailDiv);
                     return;
                 }
-                
+
                 // File exists, try to load thumbnail
                 thumbnailDiv.className = 'thumbnail-loading';
                 thumbnailDiv.textContent = '⏳';
                 thumbnailContainer.appendChild(thumbnailDiv);
-                
+
                 const img = new Image();
-                
+
                 img.onload = function() {
                     thumbnailDiv.className = 'thumbnail';
                     thumbnailDiv.innerHTML = '';
@@ -1007,13 +1032,13 @@
                         openImageComparison(groupIndex);
                     };
                 };
-                
+
                 img.onerror = function() {
                     thumbnailDiv.className = 'thumbnail-error';
                     thumbnailDiv.textContent = '❌';
                     thumbnailDiv.title = `Failed to load: ${fileInfo.path}`;
                 };
-                
+
                 img.className = 'thumbnail';
                 const encodedPath = encodeURIComponent(fileInfo.path);
                 img.src = `/api/image/${encodedPath}`;
@@ -1023,10 +1048,10 @@
         function showError(message) {
             const results = document.getElementById('results');
             const content = document.getElementById('results-content');
-            
+
             content.innerHTML = `<div class="error">${message}</div>`;
             results.classList.remove('hide');
         }
     </script>
-</body>
+    </body>
 </html>

@@ -4,7 +4,7 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 mod cache;
 mod config;
@@ -37,10 +37,7 @@ struct Args {
     #[arg(long, help = "Clean up cache entries for missing files")]
     clean_cache: bool,
 
-    #[arg(
-        long,
-        help = "Remove missing files and orphaned hashes from database"
-    )]
+    #[arg(long, help = "Remove missing files and orphaned hashes from database")]
     clean_missing: bool,
 
     #[arg(short = '.', help = "Include hidden directories (starting with .)")]
@@ -65,16 +62,10 @@ struct Args {
     )]
     show_matches: bool,
 
-    #[arg(
-        long,
-        help = "Show current configuration settings"
-    )]
+    #[arg(long, help = "Show current configuration settings")]
     show_config: bool,
 
-    #[arg(
-        long,
-        help = "Start web server for browser-based interface"
-    )]
+    #[arg(long, help = "Start web server for browser-based interface")]
     server: bool,
 }
 
@@ -84,7 +75,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
 
@@ -127,9 +118,9 @@ async fn main() -> Result<()> {
         let threshold = args.threshold.unwrap_or(config.threshold);
         info!("Using threshold: {threshold}");
         info!("Hash caching enabled");
-        
-        let duplicates = get_duplicates_from_cache(&cache, threshold)?;
-        
+
+        let duplicates = get_duplicates_from_cache(&cache, threshold, None, None)?;
+
         if duplicates.is_empty() {
             info!("No duplicate images found in cache");
         } else {
@@ -141,7 +132,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        
+
         return Ok(());
     }
 

@@ -10,8 +10,7 @@ edits, or rotations.
 
 - **CLI**: Uses `clap` for command-line argument parsing
 - **Image Processing**: Uses `image` crate for loading various image formats
-- **Perceptual Hashing**: Uses `imghash` crate with Mean-based hashing
-  algorithm
+- **Perceptual Hashing**: Uses `imghash` crate with Mean-based hashing algorithm
 - **File System**: Uses `walkdir` for recursive directory traversal
 
 ## Development Guidelines
@@ -59,7 +58,7 @@ Example config file:
 
 ```json
 {
-  "grid_size": 64,
+  "grid_size": 128,
   "threshold": 15,
   "database_path": "/custom/path/to/cache.db"
 }
@@ -139,8 +138,8 @@ The tool includes a SQLite-based caching system to speed up repeated scans:
   shown)
 - **Optimized processing**: Files with valid cache entries skip image loading
   and hash generation entirely
-- **Maintenance**: Use `--no-cache` to disable, `--clean-cache` to remove
-  stale entries, or `--clean-missing` to remove missing files and orphaned hashes
+- **Maintenance**: Use `--no-cache` to disable, `--clean-cache` to remove stale
+  entries, or `--clean-missing` to remove missing files and orphaned hashes
 
 ## Dependencies
 
@@ -175,12 +174,16 @@ The tool uses a rotation-invariant Mean-based perceptual hash that:
 
 ## Web Interface
 
-The tool includes an optional web interface for easier duplicate image management:
+The tool includes an optional web interface for easier duplicate image
+management:
 
-- **Browser-based UI**: Modern, responsive interface accessible at `http://localhost:8080`
-- **Folder scanning**: Input multiple paths, configure settings, view real-time progress
+- **Browser-based UI**: Modern, responsive interface accessible at
+  `http://localhost:8080`
+- **Folder scanning**: Input multiple paths, configure settings, view real-time
+  progress
 - **Cached matches**: Browse previously found duplicates without rescanning
-- **Configuration display**: Shows current grid size, threshold, and database location
+- **Configuration display**: Shows current grid size, threshold, and database
+  location
 - **Visual results**: Organized duplicate groups with file paths and counts
 
 ### Starting the Web Server
@@ -193,7 +196,9 @@ cargo run -- --server
 just run-server
 ```
 
-The web interface provides the same functionality as the CLI but with a more user-friendly interface for:
+The web interface provides the same functionality as the CLI but with a more
+user-friendly interface for:
+
 - Setting scan parameters (threshold, grid size, options)
 - Monitoring scan progress
 - Reviewing duplicate results

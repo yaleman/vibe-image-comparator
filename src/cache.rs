@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -16,7 +16,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            grid_size: 64,
+            grid_size: 128,
             threshold: 15,
             database_path: None,
         }
@@ -246,47 +246,48 @@ impl HashCache {
 
     pub fn cleanup_missing_files_and_hashes(&self) -> Result<(usize, usize)> {
         info!("Scanning database for missing files...");
-        
+
         // Get all file paths from database
         let mut stmt = self.conn.prepare("SELECT path FROM files")?;
         let paths: Vec<String> = stmt
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
-        
+
         let total_files = paths.len();
         let mut files_removed = 0;
-        
+
         // Check each file and collect missing ones
         let mut missing_paths = Vec::new();
         for (i, path_str) in paths.iter().enumerate() {
             if i % 100 == 0 {
                 debug!("Checked {i}/{total_files} files...");
             }
-            
+
             let path = PathBuf::from(path_str);
             if !path.exists() {
                 missing_paths.push(path_str);
             }
         }
-        
-        info!("Found {} missing files out of {} total", missing_paths.len(), total_files);
-        
+
+        info!(
+            "Found {} missing files out of {} total",
+            missing_paths.len(),
+            total_files
+        );
+
         if missing_paths.is_empty() {
             return Ok((0, 0));
         }
-        
+
         // Remove missing files from database
         info!("Removing missing files from database...");
         let tx = self.conn.unchecked_transaction()?;
-        
+
         for path_str in missing_paths {
-            tx.execute(
-                "DELETE FROM files WHERE path = ?1",
-                params![path_str],
-            )?;
+            tx.execute("DELETE FROM files WHERE path = ?1", params![path_str])?;
             files_removed += 1;
         }
-        
+
         // Clean up orphaned perceptual hashes
         info!("Cleaning up orphaned hashes...");
         let hashes_removed = tx.execute(
@@ -294,12 +295,12 @@ impl HashCache {
              WHERE id NOT IN (SELECT DISTINCT perceptual_hash_id FROM files)",
             [],
         )?;
-        
+
         tx.commit()?;
-        
+
         // Clear cached duplicate groups since file cache has changed
         self.clear_duplicate_groups_cache()?;
-        
+
         info!("Database cleanup completed successfully");
         Ok((files_removed, hashes_removed))
     }
@@ -318,9 +319,7 @@ impl HashCache {
         )?;
 
         if orphaned > 0 {
-            info!(
-                "Cleaned up {orphaned} orphaned perceptual hashes after removing broken file"
-            );
+            info!("Cleaned up {orphaned} orphaned perceptual hashes after removing broken file");
         }
 
         // Clear cached duplicate groups since file cache has changed
@@ -348,14 +347,14 @@ impl HashCache {
 
         if needs_migration {
             info!("Migrating cache schema from BLOB to TEXT...");
-            
+
             // Drop the old tables - this will lose cached data but ensures compatibility
             conn.execute("DROP TABLE IF EXISTS files", [])?;
             conn.execute("DROP TABLE IF EXISTS perceptual_hashes", [])?;
-            
+
             // Recreate tables with correct schema
             Self::create_tables(conn)?;
-            
+
             info!("Cache schema migration completed");
         }
 
@@ -367,7 +366,7 @@ impl HashCache {
             "SELECT f.path, ph.perceptual_hash 
              FROM files f 
              JOIN perceptual_hashes ph ON f.perceptual_hash_id = ph.id
-             WHERE EXISTS (SELECT 1 FROM files WHERE path = f.path)"
+             WHERE EXISTS (SELECT 1 FROM files WHERE path = f.path)",
         )?;
 
         let rows = stmt.query_map([], |row| {
@@ -419,14 +418,11 @@ impl HashCache {
             "SELECT f.path, ph.perceptual_hash 
              FROM files f 
              JOIN perceptual_hashes ph ON f.perceptual_hash_id = ph.id 
-             ORDER BY f.path"
+             ORDER BY f.path",
         )?;
 
         let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
 
         let mut hasher = Sha256::new();
@@ -440,13 +436,17 @@ impl HashCache {
     }
 
     /// Store duplicate groups for a given threshold
-    pub fn store_duplicate_groups(&self, threshold: u32, duplicates: &[Vec<PathBuf>]) -> Result<()> {
+    pub fn store_duplicate_groups(
+        &self,
+        threshold: u32,
+        duplicates: &[Vec<PathBuf>],
+    ) -> Result<()> {
         if duplicates.is_empty() {
             return Ok(());
         }
 
         let cache_hash = self.generate_cache_state_hash()?;
-        
+
         // Clear any existing duplicate groups for this threshold
         self.conn.execute(
             "DELETE FROM duplicate_groups WHERE threshold = ?1",
@@ -478,52 +478,95 @@ impl HashCache {
         }
 
         tx.commit()?;
-        info!("Cached {} duplicate groups for threshold {}", duplicates.len(), threshold);
+        info!(
+            "Cached {} duplicate groups for threshold {}",
+            duplicates.len(),
+            threshold
+        );
         Ok(())
     }
 
     /// Get cached duplicate groups for a given threshold
-    pub fn get_cached_duplicate_groups(&self, threshold: u32) -> Result<Option<Vec<Vec<PathBuf>>>> {
+    pub fn get_cached_duplicate_groups(
+        &self,
+        threshold: u32,
+        count: Option<usize>,
+        offset: Option<usize>,
+    ) -> Result<Option<Vec<Vec<PathBuf>>>> {
         let current_cache_hash = self.generate_cache_state_hash()?;
 
         // Check if we have cached groups for this threshold with matching cache state
         let mut stmt = self.conn.prepare(
-            "SELECT COUNT(*) FROM duplicate_groups WHERE threshold = ?1 AND group_hash = ?2"
+            "SELECT COUNT(*) FROM duplicate_groups WHERE threshold = ?1 AND group_hash = ?2",
         )?;
-        
-        let count: i64 = stmt.query_row(params![threshold, current_cache_hash], |row| row.get(0))?;
-        
-        if count == 0 {
-            info!("No valid cached duplicate groups found for threshold {}", threshold);
+
+        let num_rows: i64 =
+            stmt.query_row(params![threshold, current_cache_hash], |row| row.get(0))?;
+
+        if num_rows == 0 {
+            info!(
+                "No valid cached duplicate groups found for threshold {}",
+                threshold
+            );
             return Ok(None);
         }
 
-        // Retrieve the cached groups
-        let mut groups_stmt = self.conn.prepare(
+        let mut query =
             "SELECT dg.id FROM duplicate_groups dg WHERE dg.threshold = ?1 AND dg.group_hash = ?2"
-        )?;
+                .to_string();
 
-        let group_ids: Vec<i64> = groups_stmt.query_map(params![threshold, current_cache_hash], |row| {
-            row.get(0)
-        })?.collect::<Result<Vec<_>, _>>()?;
+        let params = match (count, offset) {
+            (Some(count), Some(offset)) => {
+                query = format!("{query} LIMIT ?3 OFFSET ?4");
+                params![
+                    threshold,
+                    current_cache_hash,
+                    count.to_owned(),
+                    offset.to_owned()
+                ]
+            }
+            (None, Some(offset)) => {
+                query = format!("{query} OFFSET ?3");
+                params![threshold, current_cache_hash, offset.to_owned()]
+            }
+            (Some(count), None) => {
+                query = format!("{query} LIMIT ?3");
+                params![threshold, current_cache_hash, count.to_owned()]
+            }
+            (None, None) => {
+                params![threshold, current_cache_hash]
+            }
+        };
+        // Retrieve the cached groups
+        let mut groups_stmt = self.conn.prepare(&query)?;
+
+        let group_ids: Vec<i64> = groups_stmt
+            .query_map(params, |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?;
 
         let mut duplicates = Vec::new();
-        
+
         for group_id in group_ids {
-            let mut files_stmt = self.conn.prepare(
-                "SELECT file_path FROM duplicate_group_files WHERE group_id = ?1"
-            )?;
-            
-            let file_paths: Vec<PathBuf> = files_stmt.query_map(params![group_id], |row| {
-                Ok(PathBuf::from(row.get::<_, String>(0)?))
-            })?.collect::<Result<Vec<_>, _>>()?;
-            
+            let mut files_stmt = self
+                .conn
+                .prepare("SELECT file_path FROM duplicate_group_files WHERE group_id = ?1")?;
+
+            let file_paths: Vec<PathBuf> = files_stmt
+                .query_map(params![group_id], |row| {
+                    Ok(PathBuf::from(row.get::<_, String>(0)?))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
             if file_paths.len() >= 2 {
                 duplicates.push(file_paths);
             }
         }
 
-        info!("Retrieved {} cached duplicate groups for threshold {}", duplicates.len(), threshold);
+        info!(
+            "Retrieved {} cached duplicate groups for threshold {}",
+            duplicates.len(),
+            threshold
+        );
         Ok(Some(duplicates))
     }
 

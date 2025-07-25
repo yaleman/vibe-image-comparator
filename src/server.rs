@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::TcpListener;
-use tracing::{info, warn};
+use tracing::{error, info, instrument, warn};
 
 use crate::cache::{Config, HashCache};
 use crate::hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
@@ -47,9 +47,11 @@ pub struct ScanResponse {
     duplicates: Vec<Vec<FileInfo>>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Debug)]
 pub struct MatchesQuery {
     threshold: Option<u32>,
+    count: Option<usize>,
+    offset: Option<usize>,
 }
 
 #[derive(Serialize)]
@@ -127,54 +129,56 @@ async fn handle_scan(
     let paths: Vec<PathBuf> = request.paths.iter().map(PathBuf::from).collect();
 
     // Run the expensive scanning and processing in a blocking task
-    let scan_result = tokio::task::spawn_blocking(move || -> Result<ScanResponse, anyhow::Error> {
-        let images = scan_for_images(
-            &paths,
-            request.include_hidden.unwrap_or(false),
-            request.debug.unwrap_or(false),
-            request.skip_validation.unwrap_or(false),
-        )?;
+    let scan_result =
+        tokio::task::spawn_blocking(move || -> Result<ScanResponse, anyhow::Error> {
+            let images = scan_for_images(
+                &paths,
+                request.include_hidden.unwrap_or(false),
+                request.debug.unwrap_or(false),
+                request.skip_validation.unwrap_or(false),
+            )?;
 
-        let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)?;
+            let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)?;
 
-        let duplicates = find_duplicates(&hashes, threshold);
+            let duplicates = find_duplicates(&hashes, threshold);
 
-        // Cache the duplicate groups for future use
-        if let Err(e) = cache.store_duplicate_groups(threshold, &duplicates) {
-            warn!("Failed to cache duplicate groups: {}", e);
-        }
+            // Cache the duplicate groups for future use
+            if let Err(e) = cache.store_duplicate_groups(threshold, &duplicates) {
+                warn!("Failed to cache duplicate groups: {}", e);
+            }
 
-        let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
-            .iter()
-            .map(|group| {
-                group
-                    .iter()
-                    .map(|p| FileInfo {
-                        path: p.display().to_string(),
-                        exists: p.exists(),
-                    })
-                    .collect()
+            let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
+                .iter()
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|p| FileInfo {
+                            path: p.display().to_string(),
+                            exists: p.exists(),
+                        })
+                        .collect()
+                })
+                .collect();
+
+            Ok(ScanResponse {
+                success: true,
+                message: format!(
+                    "Scanned {} images, found {} duplicate sets",
+                    images.len(),
+                    duplicates.len()
+                ),
+                duplicate_count: duplicates.len(),
+                duplicates: duplicate_file_infos,
             })
-            .collect();
-
-        Ok(ScanResponse {
-            success: true,
-            message: format!(
-                "Scanned {} images, found {} duplicate sets",
-                images.len(),
-                duplicates.len()
-            ),
-            duplicate_count: duplicates.len(),
-            duplicates: duplicate_file_infos,
         })
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     Ok(Json(scan_result))
 }
 
+#[instrument(level = "info", skip(state))]
 async fn handle_matches(
     State(state): State<Arc<AppState>>,
     Query(query): Query<MatchesQuery>,
@@ -189,7 +193,7 @@ async fn handle_matches(
 
     // Run the expensive computation in a blocking task to avoid blocking the async runtime
     let duplicates = tokio::task::spawn_blocking(move || {
-        get_duplicates_from_cache(&cache, threshold)
+        get_duplicates_from_cache(&cache, threshold, query.count, query.offset)
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -227,31 +231,35 @@ async fn handle_config(State(state): State<Arc<AppState>>) -> Json<ConfigRespons
     Json(response)
 }
 
+#[instrument(level = "info")]
 async fn serve_image(Path(image_path): Path<String>) -> Result<Response, StatusCode> {
     // Remove leading slash if present
-    let clean_path = image_path.strip_prefix('/').unwrap_or(&image_path);
-    let file_path = std::path::Path::new(clean_path);
-    
+
+    let file_path = std::path::Path::new(&image_path);
+
     // Security check: ensure the path is absolute and exists
     if !file_path.is_absolute() {
+        info!("Requested path is not a file: {}", file_path.display());
         return Err(StatusCode::BAD_REQUEST);
     }
-    
+
     if !file_path.exists() {
+        error!("Requested file does not exist: {}", file_path.display());
         return Err(StatusCode::NOT_FOUND);
     }
-    
+
     // Check if it's actually a file (not a directory)
     if !file_path.is_file() {
+        error!("Requested path is not a file: {}", file_path.display());
         return Err(StatusCode::BAD_REQUEST);
     }
-    
+
     // Read the image file
     let image_data = match tokio::fs::read(file_path).await {
         Ok(data) => data,
         Err(_) => return Err(StatusCode::INTERNAL_SERVER_ERROR),
     };
-    
+
     // Determine content type based on file extension
     let content_type = match file_path.extension().and_then(|ext| ext.to_str()) {
         Some("jpg") | Some("jpeg") => "image/jpeg",
@@ -262,20 +270,18 @@ async fn serve_image(Path(image_path): Path<String>) -> Result<Response, StatusC
         Some("tiff") | Some("tif") => "image/tiff",
         _ => "application/octet-stream",
     };
-    
+
     let response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "public, max-age=3600") // Cache for 1 hour
         .body(image_data.into())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    
+
     Ok(response)
 }
 
-async fn check_files_exist(
-    Json(request): Json<CheckFilesRequest>,
-) -> Json<CheckFilesResponse> {
+async fn check_files_exist(Json(request): Json<CheckFilesRequest>) -> Json<CheckFilesResponse> {
     let files: Vec<FileInfo> = request
         .paths
         .iter()
