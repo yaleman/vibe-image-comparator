@@ -731,25 +731,16 @@
             if (result.duplicates && result.duplicates.length > 0) {
                 html += '<h3>Duplicate Groups:</h3>';
                 result.duplicates.forEach((group, index) => {
-                    const missingCount = group.filter(file => !file.exists).length;
-                    const existingCount = group.filter(file => file.exists).length;
-                    
                     html += `
                         <div class="duplicate-group" onclick="openImageComparison(${index}, ${JSON.stringify(group).replace(/"/g, '&quot;')})">
                             <h4>
                                 Group ${index + 1} (${group.length} files)
-                                ${missingCount > 0 ? `<span class="missing-indicator">${missingCount} missing</span>` : ''}
                                 <button class="view-comparison-btn" onclick="event.stopPropagation(); openImageComparison(${index}, ${JSON.stringify(group).replace(/"/g, '&quot;')})">
                                     👁️ Compare
                                 </button>
                             </h4>
                             <ul class="file-list">
-                                ${group.map(file => `
-                                    <li class="${!file.exists ? 'file-missing' : ''}">
-                                        ${file.path}
-                                        ${!file.exists ? '<span class="missing-indicator">MISSING</span>' : ''}
-                                    </li>
-                                `).join('')}
+                                ${group.map(file => `<li>${file.path}</li>`).join('')}
                             </ul>
                             <div class="thumbnail-preview" id="thumbnails-${index}">
                                 <!-- Thumbnails will be loaded here -->
@@ -758,10 +749,10 @@
                     `;
                 });
                 
-                // Load thumbnails after the HTML is inserted
+                // Load thumbnails and check file existence after the HTML is inserted
                 setTimeout(() => {
                     result.duplicates.forEach((group, index) => {
-                        loadThumbnails(group, index);
+                        checkGroupFileExistence(group, index);
                     });
                 }, 100);
             } else {
@@ -777,7 +768,8 @@
             const modalTitle = document.getElementById('modal-title');
             const imageComparison = document.getElementById('image-comparison');
             
-            const missingCount = fileInfos.filter(file => !file.exists).length;
+            // Check if we have existence info yet (exists property may not be accurate initially)
+            const missingCount = fileInfos.filter(file => file.exists === false).length;
             modalTitle.textContent = `Compare Duplicate Images - Group ${groupIndex + 1}${missingCount > 0 ? ` (${missingCount} missing)` : ''}`;
             
             // Clear previous content
@@ -792,7 +784,7 @@
                 imageContainer.className = 'image-container';
                 
                 // Show different states based on file existence
-                if (!fileInfo.exists) {
+                if (fileInfo.exists === false) {
                     const missingDiv = document.createElement('div');
                     missingDiv.className = 'image-error';
                     missingDiv.innerHTML = `
@@ -814,12 +806,12 @@
                 imageInfo.className = 'image-info';
                 
                 const filename = document.createElement('div');
-                filename.className = `image-filename${!fileInfo.exists ? ' file-missing' : ''}`;
+                filename.className = `image-filename${fileInfo.exists === false ? ' file-missing' : ''}`;
                 filename.textContent = fileInfo.path.split('/').pop();
                 
                 const details = document.createElement('div');
-                details.className = `image-details${!fileInfo.exists ? ' file-missing' : ''}`;
-                details.innerHTML = `${fileInfo.path}${!fileInfo.exists ? ' <span class="missing-indicator">MISSING</span>' : ''}`;
+                details.className = `image-details${fileInfo.exists === false ? ' file-missing' : ''}`;
+                details.innerHTML = `${fileInfo.path}${fileInfo.exists === false ? ' <span class="missing-indicator">MISSING</span>' : ''}`;
                 
                 imageInfo.appendChild(filename);
                 imageInfo.appendChild(details);
@@ -873,6 +865,85 @@
                 closeImageModal();
             }
         });
+
+        async function checkGroupFileExistence(group, groupIndex) {
+            try {
+                // Check file existence for this group
+                const paths = group.map(file => file.path);
+                const response = await fetch('/api/check-files', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ paths: paths }),
+                });
+                
+                if (!response.ok) {
+                    console.error('Failed to check file existence');
+                    return;
+                }
+                
+                const result = await response.json();
+                const fileStatusMap = new Map();
+                result.files.forEach(file => {
+                    fileStatusMap.set(file.path, file.exists);
+                });
+                
+                // Update the group data with actual existence status
+                group.forEach(file => {
+                    file.exists = fileStatusMap.get(file.path) || false;
+                });
+                
+                // Update the UI to show missing files
+                updateGroupUI(group, groupIndex);
+                
+                // Load thumbnails now that we know file status
+                loadThumbnails(group, groupIndex);
+                
+            } catch (error) {
+                console.error('Error checking file existence:', error);
+                // Fallback: assume all files exist and load thumbnails
+                loadThumbnails(group, groupIndex);
+            }
+        }
+
+        function updateGroupUI(group, groupIndex) {
+            const missingCount = group.filter(file => !file.exists).length;
+            
+            // Update group header
+            const groupElement = document.querySelector(`[onclick*="openImageComparison(${groupIndex}"]`);
+            if (groupElement) {
+                const h4 = groupElement.querySelector('h4');
+                if (h4 && missingCount > 0) {
+                    // Add missing indicator if not already present
+                    if (!h4.querySelector('.missing-indicator')) {
+                        const missingIndicator = document.createElement('span');
+                        missingIndicator.className = 'missing-indicator';
+                        missingIndicator.textContent = `${missingCount} missing`;
+                        h4.insertBefore(missingIndicator, h4.querySelector('.view-comparison-btn'));
+                    }
+                }
+                
+                // Update file list
+                const fileList = groupElement.querySelector('.file-list');
+                if (fileList) {
+                    const listItems = fileList.querySelectorAll('li');
+                    group.forEach((file, index) => {
+                        if (listItems[index]) {
+                            if (!file.exists) {
+                                listItems[index].className = 'file-missing';
+                                if (!listItems[index].querySelector('.missing-indicator')) {
+                                    const missingSpan = document.createElement('span');
+                                    missingSpan.className = 'missing-indicator';
+                                    missingSpan.textContent = 'MISSING';
+                                    listItems[index].appendChild(missingSpan);
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
 
         function loadThumbnails(fileInfos, groupIndex) {
             const thumbnailContainer = document.getElementById(`thumbnails-${groupIndex}`);

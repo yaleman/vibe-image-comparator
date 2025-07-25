@@ -65,6 +65,16 @@ pub struct ConfigResponse {
     database_path: Option<String>,
 }
 
+#[derive(Deserialize)]
+pub struct CheckFilesRequest {
+    paths: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct CheckFilesResponse {
+    files: Vec<FileInfo>,
+}
+
 pub async fn start_server(
     config: Config,
     threshold_override: Option<u32>,
@@ -82,6 +92,7 @@ pub async fn start_server(
         .route("/api/matches", get(handle_matches))
         .route("/api/config", get(handle_config))
         .route("/api/image/{*path}", get(serve_image))
+        .route("/api/check-files", post(check_files_exist))
         .with_state(Arc::new(state));
 
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
@@ -176,7 +187,7 @@ async fn handle_matches(
                 .iter()
                 .map(|p| FileInfo {
                     path: p.display().to_string(),
-                    exists: p.exists(),
+                    exists: true, // Don't check existence here - will check lazily when needed
                 })
                 .collect()
         })
@@ -245,4 +256,22 @@ async fn serve_image(Path(image_path): Path<String>) -> Result<Response, StatusC
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     
     Ok(response)
+}
+
+async fn check_files_exist(
+    Json(request): Json<CheckFilesRequest>,
+) -> Json<CheckFilesResponse> {
+    let files: Vec<FileInfo> = request
+        .paths
+        .iter()
+        .map(|path_str| {
+            let path = std::path::Path::new(path_str);
+            FileInfo {
+                path: path_str.clone(),
+                exists: path.exists(),
+            }
+        })
+        .collect();
+
+    Json(CheckFilesResponse { files })
 }
