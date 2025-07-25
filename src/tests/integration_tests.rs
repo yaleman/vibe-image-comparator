@@ -170,10 +170,11 @@ fn test_broken_symlink_handling() {
 
     // Test cleanup doesn't fail when files are missing
     let deleted = cache
-        .cleanup_missing_files()
+        .cleanup_missing_files_and_hashes()
         .expect("Cleanup should not fail");
     assert_eq!(
-        deleted, 0,
+        deleted,
+        (0, 0),
         "No files should be deleted from in-memory cache"
     );
 }
