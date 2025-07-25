@@ -60,7 +60,12 @@ Example config file:
 {
   "grid_size": 128,
   "threshold": 15,
-  "database_path": "/custom/path/to/cache.db"
+  "database_path": "/custom/path/to/cache.db",
+  "ignore_paths": [
+    "~/Pictures/Photos Library.photoslibrary/",
+    "~/Library/",
+    "/System/"
+  ]
 }
 ```
 
@@ -71,6 +76,7 @@ Configuration options:
 - `threshold`: Similarity threshold (0-max, lower = more similar)
 - `database_path`: Custom path for the cache database (optional, defaults to XDG
   cache directory)
+- `ignore_paths`: Array of paths to ignore during scanning. Supports tilde (~) expansion for home directory. Paths are matched as prefixes.
 
 ## Usage
 

@@ -1,9 +1,46 @@
 use anyhow::Result;
+use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use tracing::{warn, debug};
+
+/// Expand tilde (~) in a path to the user's home directory
+fn expand_tilde(path: &str) -> PathBuf {
+    if path.starts_with("~/") || path == "~" {
+        if let Some(home) = env::var_os("HOME") {
+            let home_path = PathBuf::from(home);
+            if path == "~" {
+                home_path
+            } else {
+                home_path.join(&path[2..]) // Skip "~/"
+            }
+        } else {
+            PathBuf::from(path)
+        }
+    } else {
+        PathBuf::from(path)
+    }
+}
+
+/// Check if a path should be ignored based on the ignore list
+fn should_ignore_path(path: &Path, ignore_paths: &[String]) -> bool {
+    let path_str = path.to_string_lossy();
+    
+    for ignore_pattern in ignore_paths {
+        let expanded_pattern = expand_tilde(ignore_pattern);
+        let pattern_str = expanded_pattern.to_string_lossy();
+        
+        // Check if the path starts with the ignore pattern
+        if path_str.starts_with(pattern_str.as_ref()) {
+            debug!("Ignoring path {} (matches pattern {})", path_str, pattern_str);
+            return true;
+        }
+    }
+    
+    false
+}
 
 pub fn validate_image_format(path: &Path) -> Result<bool> {
     let mut file = fs::File::open(path)?;
@@ -123,12 +160,20 @@ pub fn process_dir(
     image_extensions: &[&str],
     skip_validation: bool,
     debug: bool,
+    ignore_paths: &[String],
 ) -> Result<Vec<PathBuf>> {
     let mut images = Vec::new();
     let walker = WalkDir::new(path)
         .follow_links(true)
         .into_iter()
         .filter_entry(|e| {
+            let entry_path = e.path();
+            
+            // First check if this path should be ignored
+            if should_ignore_path(entry_path, ignore_paths) {
+                return false;
+            }
+            
             if include_hidden {
                 true
             } else {
@@ -169,11 +214,18 @@ pub fn scan_for_images(
     include_hidden: bool,
     debug: bool,
     skip_validation: bool,
+    ignore_paths: &[String],
 ) -> Result<Vec<PathBuf>> {
     let mut images = Vec::new();
     let image_extensions = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"];
 
     for path in paths {
+        // Check if the path itself should be ignored
+        if should_ignore_path(path, ignore_paths) {
+            debug!("Skipping ignored path: {}", path.display());
+            continue;
+        }
+        
         if path.is_file() {
             images.extend(process_file(
                 path,
@@ -188,6 +240,7 @@ pub fn scan_for_images(
                 &image_extensions,
                 skip_validation,
                 debug,
+                ignore_paths,
             )?);
         }
     }

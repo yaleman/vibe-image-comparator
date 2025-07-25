@@ -153,6 +153,7 @@ async fn main() -> Result<()> {
         args.include_hidden,
         args.debug,
         args.skip_validation,
+        &config.ignore_paths,
     )?;
 
     info!("Found {} images", images.len());

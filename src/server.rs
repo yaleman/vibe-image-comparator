@@ -127,6 +127,7 @@ async fn handle_scan(
         .unwrap_or(state.config.grid_size);
 
     let paths: Vec<PathBuf> = request.paths.iter().map(PathBuf::from).collect();
+    let ignore_paths = state.config.ignore_paths.clone();
 
     // Run the expensive scanning and processing in a blocking task
     let scan_result =
@@ -136,6 +137,7 @@ async fn handle_scan(
                 request.include_hidden.unwrap_or(false),
                 request.debug.unwrap_or(false),
                 request.skip_validation.unwrap_or(false),
+                &ignore_paths,
             )?;
 
             let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)?;

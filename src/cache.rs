@@ -11,6 +11,8 @@ pub struct Config {
     pub grid_size: u32,
     pub threshold: u32,
     pub database_path: Option<String>,
+    #[serde(default)]
+    pub ignore_paths: Vec<String>,
 }
 
 impl Default for Config {
@@ -19,6 +21,7 @@ impl Default for Config {
             grid_size: 128,
             threshold: 15,
             database_path: None,
+            ignore_paths: Vec::new(),
         }
     }
 }
