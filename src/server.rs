@@ -125,44 +125,48 @@ async fn handle_scan(
 
     let paths: Vec<PathBuf> = request.paths.iter().map(PathBuf::from).collect();
 
-    let images = scan_for_images(
-        &paths,
-        request.include_hidden.unwrap_or(false),
-        request.debug.unwrap_or(false),
-        request.skip_validation.unwrap_or(false),
-    )
+    // Run the expensive scanning and processing in a blocking task
+    let scan_result = tokio::task::spawn_blocking(move || -> Result<ScanResponse, anyhow::Error> {
+        let images = scan_for_images(
+            &paths,
+            request.include_hidden.unwrap_or(false),
+            request.debug.unwrap_or(false),
+            request.skip_validation.unwrap_or(false),
+        )?;
+
+        let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)?;
+
+        let duplicates = find_duplicates(&hashes, threshold);
+
+        let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
+            .iter()
+            .map(|group| {
+                group
+                    .iter()
+                    .map(|p| FileInfo {
+                        path: p.display().to_string(),
+                        exists: p.exists(),
+                    })
+                    .collect()
+            })
+            .collect();
+
+        Ok(ScanResponse {
+            success: true,
+            message: format!(
+                "Scanned {} images, found {} duplicate sets",
+                images.len(),
+                duplicates.len()
+            ),
+            duplicate_count: duplicates.len(),
+            duplicates: duplicate_file_infos,
+        })
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let hashes = generate_hashes_with_cache(&images, grid_size, &cache, false)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let duplicates = find_duplicates(&hashes, threshold);
-
-    let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
-        .iter()
-        .map(|group| {
-            group
-                .iter()
-                .map(|p| FileInfo {
-                    path: p.display().to_string(),
-                    exists: p.exists(),
-                })
-                .collect()
-        })
-        .collect();
-
-    let response = ScanResponse {
-        success: true,
-        message: format!(
-            "Scanned {} images, found {} duplicate sets",
-            images.len(),
-            duplicates.len()
-        ),
-        duplicate_count: duplicates.len(),
-        duplicates: duplicate_file_infos,
-    };
-
-    Ok(Json(response))
+    Ok(Json(scan_result))
 }
 
 async fn handle_matches(
@@ -177,8 +181,13 @@ async fn handle_matches(
         .or(state.threshold_override)
         .unwrap_or(state.config.threshold);
 
-    let duplicates = get_duplicates_from_cache(&cache, threshold)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // Run the expensive computation in a blocking task to avoid blocking the async runtime
+    let duplicates = tokio::task::spawn_blocking(move || {
+        get_duplicates_from_cache(&cache, threshold)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
         .iter()
