@@ -94,6 +94,9 @@ cargo run -- --server
 # Clean up cache entries for missing files
 cargo run -- --clean-cache
 
+# Remove missing files and orphaned hashes from database
+cargo run -- --clean-missing
+
 # Show duplicate matches from cache only (no scanning)
 cargo run -- --show-matches --threshold 10
 
@@ -136,8 +139,8 @@ The tool includes a SQLite-based caching system to speed up repeated scans:
   shown)
 - **Optimized processing**: Files with valid cache entries skip image loading
   and hash generation entirely
-- **Maintenance**: Use `--no-cache` to disable or `--clean-cache` to remove
-  stale entries
+- **Maintenance**: Use `--no-cache` to disable, `--clean-cache` to remove
+  stale entries, or `--clean-missing` to remove missing files and orphaned hashes
 
 ## Dependencies
 

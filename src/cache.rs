@@ -220,6 +220,63 @@ impl HashCache {
         Ok(deleted)
     }
 
+    pub fn cleanup_missing_files_and_hashes(&self) -> Result<(usize, usize)> {
+        println!("Scanning database for missing files...");
+        
+        // Get all file paths from database
+        let mut stmt = self.conn.prepare("SELECT path FROM files")?;
+        let paths: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        
+        let total_files = paths.len();
+        let mut files_removed = 0;
+        
+        // Check each file and collect missing ones
+        let mut missing_paths = Vec::new();
+        for (i, path_str) in paths.iter().enumerate() {
+            if i % 100 == 0 {
+                println!("Checked {i}/{total_files} files...");
+            }
+            
+            let path = PathBuf::from(path_str);
+            if !path.exists() {
+                missing_paths.push(path_str);
+            }
+        }
+        
+        println!("Found {} missing files out of {} total", missing_paths.len(), total_files);
+        
+        if missing_paths.is_empty() {
+            return Ok((0, 0));
+        }
+        
+        // Remove missing files from database
+        println!("Removing missing files from database...");
+        let tx = self.conn.unchecked_transaction()?;
+        
+        for path_str in missing_paths {
+            tx.execute(
+                "DELETE FROM files WHERE path = ?1",
+                params![path_str],
+            )?;
+            files_removed += 1;
+        }
+        
+        // Clean up orphaned perceptual hashes
+        println!("Cleaning up orphaned hashes...");
+        let hashes_removed = tx.execute(
+            "DELETE FROM perceptual_hashes 
+             WHERE id NOT IN (SELECT DISTINCT perceptual_hash_id FROM files)",
+            [],
+        )?;
+        
+        tx.commit()?;
+        
+        println!("Database cleanup completed successfully");
+        Ok((files_removed, hashes_removed))
+    }
+
     pub fn remove_file_entry(&self, path: &Path) -> Result<()> {
         self.conn.execute(
             "DELETE FROM files WHERE path = ?1",

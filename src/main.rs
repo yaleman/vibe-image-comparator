@@ -36,6 +36,12 @@ struct Args {
     #[arg(long, help = "Clean up cache entries for missing files")]
     clean_cache: bool,
 
+    #[arg(
+        long,
+        help = "Remove missing files and orphaned hashes from database"
+    )]
+    clean_missing: bool,
+
     #[arg(short = '.', help = "Include hidden directories (starting with .)")]
     include_hidden: bool,
 
@@ -94,6 +100,14 @@ async fn main() -> Result<()> {
     if args.clean_cache {
         let deleted = cache.cleanup_missing_files()?;
         println!("Cleaned up {deleted} entries from cache");
+        if args.paths.is_empty() {
+            return Ok(());
+        }
+    }
+
+    if args.clean_missing {
+        let (files_removed, hashes_removed) = cache.cleanup_missing_files_and_hashes()?;
+        println!("Cleaned up {files_removed} missing files and {hashes_removed} orphaned hashes from database");
         if args.paths.is_empty() {
             return Ok(());
         }
