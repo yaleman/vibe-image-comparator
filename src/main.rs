@@ -12,7 +12,7 @@ mod hasher;
 mod scanner;
 mod server;
 
-use cache::{HashCache, ResolvedConfig};
+use cache::HashCache;
 use config::{load_config, show_config_with_overrides};
 use hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
 use scanner::scan_for_images;

@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use crate::cache::{Config, ResolvedConfig};
+use crate::cache::Config;
 
 pub fn load_config() -> Result<Config> {
     let config_dir =
@@ -39,8 +39,7 @@ pub fn show_config_with_overrides(
         if let Some(config_grid_size) = config.grid_size {
             if override_val != config_grid_size {
                 println!(
-                    "  (overridden from config default: {}x{})",
-                    config_grid_size, config_grid_size
+                    "  (overridden from config default: {config_grid_size}x{config_grid_size})"
                 );
             }
         } else {
@@ -52,7 +51,7 @@ pub fn show_config_with_overrides(
     if let Some(override_val) = threshold_override {
         if let Some(config_threshold) = config.threshold {
             if override_val != config_threshold {
-                println!("  (overridden from config default: {})", config_threshold);
+                println!("  (overridden from config default: {config_threshold})");
             }
         } else {
             println!("  (overridden from default: 15)");
@@ -67,6 +66,17 @@ pub fn show_config_with_overrides(
             .join("vibe-image-comparator");
         let default_db_path = cache_dir.join("hashes.db");
         println!("Database path: {} (default)", default_db_path.display());
+    }
+
+    // Show ignore paths
+    let ignore_paths = effective_config.ignore_paths;
+    if ignore_paths.is_empty() {
+        println!("Ignore paths: (none)");
+    } else {
+        println!("Ignore paths:");
+        for path in &ignore_paths {
+            println!("  - {path}");
+        }
     }
 
     let default_config_path = config_dir.join("vibe-image-comparator.json");

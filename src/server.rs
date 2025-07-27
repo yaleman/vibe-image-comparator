@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tracing::{error, info, instrument, warn};
 
-use crate::cache::{Config, HashCache, ResolvedConfig};
+use crate::cache::{Config, HashCache};
 use crate::hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
 use crate::scanner::scan_for_images;
 
