@@ -467,6 +467,32 @@ input[type="checkbox"] {
     color: #7f8c8d;
 }
 
+.file-path {
+    margin-bottom: 4px;
+    word-break: break-all;
+}
+
+.file-size {
+    margin-bottom: 2px;
+    font-weight: 500;
+}
+
+.file-hash {
+    margin-bottom: 2px;
+}
+
+.file-hash code {
+    background: #f8f9fa;
+    padding: 2px 4px;
+    border-radius: 3px;
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 11px;
+    color: #2c3e50;
+    word-break: break-all;
+    display: inline-block;
+    max-width: 100%;
+}
+
 .image-loading {
     display: flex;
     align-items: center;

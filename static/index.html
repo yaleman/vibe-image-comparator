@@ -136,6 +136,15 @@
         let duplicateGroups = []; // Store duplicate groups globally
         let currentGroupIndex = -1; // Track current group being viewed in modal
 
+        // Helper function to format file size
+        function formatFileSize(bytes) {
+            if (!bytes) return 'Unknown';
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            if (bytes === 0) return '0 B';
+            const i = Math.floor(Math.log(bytes) / Math.log(1024));
+            return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
+        }
+
         // Load configuration and cached matches on page load
         document.addEventListener('DOMContentLoaded', function() {
             loadConfig();
@@ -379,7 +388,22 @@
 
                 const details = document.createElement('div');
                 details.className = `image-details${fileInfo.exists === false ? ' file-missing' : ''}`;
-                details.innerHTML = `${fileInfo.path}${fileInfo.exists === false ? ' <span class="missing-indicator">MISSING</span>' : ''}`;
+                
+                let detailsHtml = `<div class="file-path">${fileInfo.path}</div>`;
+                
+                if (fileInfo.exists === false) {
+                    detailsHtml += '<span class="missing-indicator">MISSING</span>';
+                } else {
+                    // Add file size
+                    detailsHtml += `<div class="file-size">Size: ${formatFileSize(fileInfo.size)}</div>`;
+                    
+                    // Add hash if available
+                    if (fileInfo.hash) {
+                        detailsHtml += `<div class="file-hash">Hash: <code>${fileInfo.hash}</code></div>`;
+                    }
+                }
+                
+                details.innerHTML = detailsHtml;
 
                 imageInfo.appendChild(filename);
                 imageInfo.appendChild(details);

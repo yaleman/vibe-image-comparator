@@ -16,6 +16,36 @@ use crate::cache::{Config, HashCache};
 use crate::hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
 use crate::scanner::scan_for_images;
 
+fn get_file_info_with_details(path: &std::path::Path, cache: &HashCache) -> FileInfo {
+    let path_str = path.display().to_string();
+    let exists = path.exists();
+
+    let size = if exists {
+        std::fs::metadata(path).map(|m| m.len()).ok()
+    } else {
+        None
+    };
+
+    // Try to get hash from cache
+    let hash = if exists {
+        cache.get_all_cached_hashes().ok().and_then(|hashes| {
+            hashes
+                .iter()
+                .find(|(p, _)| p == path)
+                .map(|(_, h)| h.clone())
+        })
+    } else {
+        None
+    };
+
+    FileInfo {
+        path: path_str,
+        exists,
+        size,
+        hash,
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     config: Config,
@@ -37,6 +67,8 @@ pub struct ScanRequest {
 pub struct FileInfo {
     path: String,
     exists: bool,
+    size: Option<u64>,
+    hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -182,10 +214,7 @@ async fn handle_scan(
                 .map(|group| {
                     group
                         .iter()
-                        .map(|p| FileInfo {
-                            path: p.display().to_string(),
-                            exists: p.exists(),
-                        })
+                        .map(|p| get_file_info_with_details(p, &cache))
                         .collect()
                 })
                 .collect();
@@ -226,29 +255,30 @@ async fn handle_matches(
         .unwrap_or(effective_config.threshold);
 
     // Run the expensive computation in a blocking task to avoid blocking the async runtime
-    let duplicates = tokio::task::spawn_blocking(move || {
-        get_duplicates_from_cache(&cache, threshold, query.count, query.offset)
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let result =
+        tokio::task::spawn_blocking(move || -> Result<Vec<Vec<FileInfo>>, anyhow::Error> {
+            let duplicates =
+                get_duplicates_from_cache(&cache, threshold, query.count, query.offset)?;
 
-    let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
-        .iter()
-        .map(|group| {
-            group
+            let duplicate_file_infos: Vec<Vec<FileInfo>> = duplicates
                 .iter()
-                .map(|p| FileInfo {
-                    path: p.display().to_string(),
-                    exists: true, // Don't check existence here - will check lazily when needed
+                .map(|group| {
+                    group
+                        .iter()
+                        .map(|p| get_file_info_with_details(p, &cache))
+                        .collect()
                 })
-                .collect()
+                .collect();
+
+            Ok(duplicate_file_infos)
         })
-        .collect();
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let response = MatchesResponse {
         success: true,
-        duplicates: duplicate_file_infos,
+        duplicates: result,
         threshold,
     };
 
@@ -326,18 +356,44 @@ async fn serve_image(Path(image_path): Path<String>) -> Result<Response, StatusC
     Ok(response)
 }
 
-async fn check_files_exist(Json(request): Json<CheckFilesRequest>) -> Json<CheckFilesResponse> {
-    let files: Vec<FileInfo> = request
-        .paths
-        .iter()
-        .map(|path_str| {
-            let path = std::path::Path::new(path_str);
-            FileInfo {
-                path: path_str.clone(),
-                exists: path.exists(),
-            }
-        })
-        .collect();
+async fn check_files_exist(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<CheckFilesRequest>,
+) -> Json<CheckFilesResponse> {
+    let effective_config =
+        state
+            .config
+            .with_overrides(state.grid_size_override, state.threshold_override, None);
+
+    let files: Vec<FileInfo> =
+        if let Ok(cache) = HashCache::new(effective_config.database_path.as_deref()) {
+            request
+                .paths
+                .iter()
+                .map(|path_str| {
+                    let path = std::path::Path::new(path_str);
+                    get_file_info_with_details(path, &cache)
+                })
+                .collect()
+        } else {
+            // Fallback if cache is not available
+            request
+                .paths
+                .iter()
+                .map(|path_str| {
+                    let path = std::path::Path::new(path_str);
+                    FileInfo {
+                        path: path_str.clone(),
+                        exists: path.exists(),
+                        size: path
+                            .exists()
+                            .then(|| std::fs::metadata(path).map(|m| m.len()).ok())
+                            .flatten(),
+                        hash: None,
+                    }
+                })
+                .collect()
+        };
 
     Json(CheckFilesResponse { files })
 }
