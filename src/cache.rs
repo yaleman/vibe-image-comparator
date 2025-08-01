@@ -45,16 +45,10 @@ impl Config {
         cli_database_path: Option<String>,
     ) -> ResolvedConfig {
         ResolvedConfig {
-            grid_size: cli_grid_size
-                .or(self.grid_size)
-                .unwrap_or(128),
-            threshold: cli_threshold
-                .or(self.threshold)
-                .unwrap_or(15),
-            database_path: cli_database_path
-                .or_else(|| self.database_path.clone()),
-            ignore_paths: self.ignore_paths.clone()
-                .unwrap_or_default(),
+            grid_size: cli_grid_size.or(self.grid_size).unwrap_or(128),
+            threshold: cli_threshold.or(self.threshold).unwrap_or(15),
+            database_path: cli_database_path.or_else(|| self.database_path.clone()),
+            ignore_paths: self.ignore_paths.clone().unwrap_or_default(),
         }
     }
 }
@@ -249,7 +243,6 @@ impl HashCache {
 
         Ok(())
     }
-
 
     pub fn cleanup_missing_files_and_hashes(&self) -> Result<(usize, usize)> {
         info!("Scanning database for missing files...");
@@ -589,28 +582,28 @@ impl HashCache {
     /// Completely clear all cache data (files, hashes, duplicate groups)
     pub fn clear_all_cache(&self) -> Result<()> {
         info!("Clearing all cache data...");
-        
+
         let tx = self.conn.unchecked_transaction()?;
-        
+
         // Clear all tables in reverse dependency order
         let duplicate_groups_deleted = tx.execute("DELETE FROM duplicate_group_files", [])?;
         let files_deleted = tx.execute("DELETE FROM duplicate_groups", [])?;
         let perceptual_hashes_deleted = tx.execute("DELETE FROM files", [])?;
         let _final_deleted = tx.execute("DELETE FROM perceptual_hashes", [])?;
-        
+
         tx.commit()?;
-        
+
         info!("Cleared all cache data:");
         info!("  - {} duplicate group files", duplicate_groups_deleted);
         info!("  - {} duplicate groups", files_deleted);
         info!("  - {} file entries", perceptual_hashes_deleted);
         info!("  - All perceptual hashes");
-        
+
         // Vacuum the database to reclaim disk space
         info!("Reclaiming disk space...");
         self.conn.execute("VACUUM", [])?;
         info!("Database optimization complete");
-        
+
         Ok(())
     }
 }

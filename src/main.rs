@@ -37,7 +37,10 @@ struct Args {
     #[arg(long, help = "Remove missing files and orphaned hashes from database")]
     clean_missing: bool,
 
-    #[arg(long, help = "Completely clear all cache data (files, hashes, duplicate groups)")]
+    #[arg(
+        long,
+        help = "Completely clear all cache data (files, hashes, duplicate groups)"
+    )]
     clear_cache: bool,
 
     #[arg(short = '.', help = "Include hidden directories (starting with .)")]

@@ -3,8 +3,8 @@ use std::env;
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use tracing::{debug, warn};
 use walkdir::WalkDir;
-use tracing::{warn, debug};
 
 /// Expand tilde (~) in a path to the user's home directory
 fn expand_tilde(path: &str) -> PathBuf {
@@ -27,18 +27,21 @@ fn expand_tilde(path: &str) -> PathBuf {
 /// Check if a path should be ignored based on the ignore list
 fn should_ignore_path(path: &Path, ignore_paths: &[String]) -> bool {
     let path_str = path.to_string_lossy();
-    
+
     for ignore_pattern in ignore_paths {
         let expanded_pattern = expand_tilde(ignore_pattern);
         let pattern_str = expanded_pattern.to_string_lossy();
-        
+
         // Check if the path starts with the ignore pattern
         if path_str.starts_with(pattern_str.as_ref()) {
-            debug!("Ignoring path {} (matches pattern {})", path_str, pattern_str);
+            debug!(
+                "Ignoring path {} (matches pattern {})",
+                path_str, pattern_str
+            );
             return true;
         }
     }
-    
+
     false
 }
 
@@ -168,12 +171,12 @@ pub fn process_dir(
         .into_iter()
         .filter_entry(|e| {
             let entry_path = e.path();
-            
+
             // First check if this path should be ignored
             if should_ignore_path(entry_path, ignore_paths) {
                 return false;
             }
-            
+
             if include_hidden {
                 true
             } else {
@@ -225,7 +228,7 @@ pub fn scan_for_images(
             debug!("Skipping ignored path: {}", path.display());
             continue;
         }
-        
+
         if path.is_file() {
             images.extend(process_file(
                 path,

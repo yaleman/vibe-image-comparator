@@ -13,7 +13,8 @@ fn test_all_same_directory_finds_three_duplicates() {
     }
 
     let paths = vec![test_dir.to_path_buf()];
-    let images = scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
+    let images =
+        scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
 
     assert_eq!(
         images.len(),
@@ -69,7 +70,8 @@ fn test_scan_for_images_finds_expected_extensions() {
     }
 
     let paths = vec![test_dir.to_path_buf()];
-    let images = scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
+    let images =
+        scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
 
     let extensions: std::collections::HashSet<_> = images
         .iter()
@@ -90,7 +92,8 @@ fn test_rotated_images_are_detected_as_duplicates() {
     }
 
     let paths = vec![test_dir.to_path_buf()];
-    let images = scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
+    let images =
+        scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
 
     assert_eq!(
         images.len(),
@@ -150,7 +153,8 @@ fn test_broken_symlink_handling() {
 
     // Test scanning with broken symlink
     let paths = vec![temp_path.to_path_buf()];
-    let images = scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
+    let images =
+        scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
 
     // Should only find the real image, broken symlink should be skipped
     assert_eq!(images.len(), 1, "Should find only the real image file");
@@ -254,7 +258,8 @@ fn test_cache_optimization_skips_file_processing() {
     }
 
     let paths = vec![test_dir.to_path_buf()];
-    let images = scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
+    let images =
+        scan_for_images(&paths, false, false, false, &[]).expect("Failed to scan for images");
 
     // Use in-memory cache to test optimization
     let cache = HashCache::new_in_memory().expect("Failed to create in-memory cache");
