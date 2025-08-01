@@ -4,502 +4,7 @@
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Vibe Image Comparator</title>
-        <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            line-height: 1.6;
-            color: #333;
-            background-color: #f5f5f5;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        header {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
-
-        h1 {
-            color: #2c3e50;
-            margin-bottom: 10px;
-        }
-
-        .subtitle {
-            color: #7f8c8d;
-            font-size: 14px;
-        }
-
-        .tabs {
-            display: flex;
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
-
-        .tab {
-            flex: 1;
-            padding: 15px 20px;
-            background: #ecf0f1;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-            transition: background-color 0.3s;
-        }
-
-        .tab.active {
-            background: #3498db;
-            color: white;
-        }
-
-        .tab:hover:not(.active) {
-            background: #d5dbdb;
-        }
-
-        .tab-content {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
-
-        .form-group {
-            margin-bottom: 20px;
-        }
-
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: 500;
-            color: #2c3e50;
-        }
-
-        input[type="text"], input[type="number"], textarea {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e6ed;
-            border-radius: 6px;
-            font-size: 14px;
-            transition: border-color 0.3s;
-        }
-
-        input[type="text"]:focus, input[type="number"]:focus, textarea:focus {
-            outline: none;
-            border-color: #3498db;
-        }
-
-        textarea {
-            height: 100px;
-            resize: vertical;
-        }
-
-        .form-row {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-        }
-
-        .checkbox-group {
-            display: flex;
-            gap: 20px;
-            align-items: center;
-        }
-
-        .checkbox-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        input[type="checkbox"] {
-            width: 18px;
-            height: 18px;
-        }
-
-        .btn {
-            background: #3498db;
-            color: white;
-            border: none;
-            padding: 12px 30px;
-            border-radius: 6px;
-            font-size: 16px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-
-        .btn:hover:not(:disabled) {
-            background: #2980b9;
-        }
-
-        .btn:disabled {
-            background: #bdc3c7;
-            cursor: not-allowed;
-        }
-
-        .btn-secondary {
-            background: #95a5a6;
-        }
-
-        .btn-secondary:hover:not(:disabled) {
-            background: #7f8c8d;
-        }
-
-        .loading {
-            display: none;
-            text-align: center;
-            padding: 20px;
-            color: #7f8c8d;
-        }
-
-        .loading.show {
-            display: block;
-        }
-
-        .results {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-            margin-top: 20px;
-        }
-
-        .results.hide {
-            display: none;
-        }
-
-        .duplicate-group {
-            background: #f8f9fa;
-            border: 1px solid #e9ecef;
-            border-radius: 6px;
-            padding: 15px;
-            margin-bottom: 15px;
-        }
-
-        .duplicate-group h4 {
-            color: #e74c3c;
-            margin-bottom: 10px;
-        }
-
-        .file-list {
-            list-style: none;
-        }
-
-        .file-list li {
-            padding: 5px 0;
-            border-bottom: 1px solid #eee;
-            font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 13px;
-        }
-
-        .file-list li:last-child {
-            border-bottom: none;
-        }
-
-        .thumbnail-preview {
-            display: flex;
-            gap: 10px;
-            margin-top: 10px;
-            flex-wrap: wrap;
-        }
-
-        .thumbnail {
-            width: 60px;
-            height: 60px;
-            object-fit: cover;
-            border-radius: 4px;
-            border: 2px solid #ddd;
-            cursor: pointer;
-            transition: border-color 0.3s;
-        }
-
-        .thumbnail:hover {
-            border-color: #3498db;
-        }
-
-        .thumbnail-loading {
-            width: 60px;
-            height: 60px;
-            background: #f0f0f0;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            color: #999;
-        }
-
-        .thumbnail-error {
-            width: 60px;
-            height: 60px;
-            background: #fadbd8;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            color: #e74c3c;
-        }
-
-        .file-missing {
-            color: #e74c3c;
-            background-color: #fadbd8;
-            padding: 2px 6px;
-            border-radius: 3px;
-            font-weight: bold;
-            text-decoration: line-through;
-        }
-
-        .missing-indicator {
-            display: inline-block;
-            margin-left: 8px;
-            padding: 2px 6px;
-            background: #e74c3c;
-            color: white;
-            border-radius: 3px;
-            font-size: 11px;
-            font-weight: bold;
-        }
-
-        .thumbnail-missing {
-            width: 60px;
-            height: 60px;
-            background: #fadbd8;
-            border: 2px solid #e74c3c;
-            border-radius: 4px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 16px;
-            color: #e74c3c;
-            cursor: default;
-        }
-
-        .error {
-            background: #fadbd8;
-            color: #c0392b;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 15px;
-            border-left: 4px solid #e74c3c;
-        }
-
-        .success {
-            background: #d5f4e6;
-            color: #27ae60;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 15px;
-            border-left: 4px solid #27ae60;
-        }
-
-        .config-info {
-            background: #ebf3fd;
-            padding: 15px;
-            border-radius: 6px;
-            margin-bottom: 20px;
-            border-left: 4px solid #3498db;
-        }
-
-        .config-info h3 {
-            margin-bottom: 10px;
-            color: #2c3e50;
-        }
-
-        .config-detail {
-            margin: 5px 0;
-            font-size: 14px;
-        }
-
-        /* Modal styles */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.9);
-        }
-
-        .modal.show {
-            display: block;
-        }
-
-        .modal-content {
-            position: relative;
-            margin: 2% auto;
-            padding: 20px;
-            width: 95%;
-            max-width: 1200px;
-            height: 90%;
-            background: white;
-            border-radius: 8px;
-            overflow: hidden;
-        }
-
-        .modal-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            padding-bottom: 15px;
-            border-bottom: 2px solid #eee;
-        }
-
-        .modal-title {
-            font-size: 24px;
-            color: #2c3e50;
-            margin: 0;
-        }
-
-        .close-btn {
-            background: none;
-            border: none;
-            font-size: 30px;
-            cursor: pointer;
-            color: #7f8c8d;
-            padding: 0;
-            width: 40px;
-            height: 40px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            transition: background-color 0.3s;
-        }
-
-        .close-btn:hover {
-            background-color: #ecf0f1;
-        }
-
-        .image-comparison {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            height: calc(100% - 80px);
-            overflow-y: auto;
-        }
-
-        .image-item {
-            display: flex;
-            flex-direction: column;
-            background: #f8f9fa;
-            border-radius: 8px;
-            overflow: hidden;
-            border: 2px solid #e9ecef;
-        }
-
-        .image-container {
-            flex: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            background: #ffffff;
-            min-height: 200px;
-        }
-
-        .comparison-image {
-            max-width: 100%;
-            max-height: 400px;
-            object-fit: contain;
-            border-radius: 4px;
-        }
-
-        .image-info {
-            padding: 15px;
-            background: #f8f9fa;
-        }
-
-        .image-filename {
-            font-family: 'Monaco', 'Menlo', monospace;
-            font-size: 13px;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 8px;
-            word-break: break-all;
-        }
-
-        .image-details {
-            font-size: 12px;
-            color: #7f8c8d;
-        }
-
-        .image-loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 200px;
-            color: #7f8c8d;
-        }
-
-        .image-error {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            min-height: 200px;
-            color: #e74c3c;
-            background: #fadbd8;
-        }
-
-        .duplicate-group {
-            cursor: pointer;
-            transition: background-color 0.3s, border-color 0.3s;
-        }
-
-        .duplicate-group:hover {
-            background: #e8f4f8;
-            border-color: #3498db;
-        }
-
-        .duplicate-group h4 {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .view-comparison-btn {
-            background: #3498db;
-            color: white;
-            border: none;
-            padding: 6px 12px;
-            border-radius: 4px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: background-color 0.3s;
-        }
-
-        .view-comparison-btn:hover {
-            background: #2980b9;
-        }
-
-        @media (max-width: 768px) {
-            .form-row {
-                grid-template-columns: 1fr;
-            }
-
-            .checkbox-group {
-                flex-direction: column;
-                align-items: flex-start;
-            }
-        }
-    </style>
+        <link rel="stylesheet" href="styles.css">
     </head>
     <body>
         <div class="container">
@@ -629,6 +134,7 @@
         <script>
         let currentConfig = {};
         let duplicateGroups = []; // Store duplicate groups globally
+        let currentGroupIndex = -1; // Track current group being viewed in modal
 
         // Load configuration and cached matches on page load
         document.addEventListener('DOMContentLoaded', function() {
@@ -809,6 +315,9 @@
             if (!duplicateGroups[groupIndex]) return;
             const fileInfos = duplicateGroups[groupIndex];
 
+            // Track current group index
+            currentGroupIndex = groupIndex;
+
             const modal = document.getElementById('image-modal');
             const modalTitle = document.getElementById('modal-title');
             const imageComparison = document.getElementById('image-comparison');
@@ -818,7 +327,8 @@
 
             // Check if we have existence info yet (exists property may not be accurate initially)
             const missingCount = fileInfos.filter(file => file.exists === false).length;
-            modalTitle.textContent = `Compare Duplicate Images - Group ${groupIndex + 1}${missingCount > 0 ? ` (${missingCount} missing)` : ''}`;
+            const totalGroups = duplicateGroups.length;
+            modalTitle.textContent = `Compare Duplicate Images - Group ${groupIndex + 1} of ${totalGroups}${missingCount > 0 ? ` (${missingCount} missing)` : ''} - Use ← → to navigate`;
 
             // Clear previous content
             imageComparison.innerHTML = '';
@@ -852,6 +362,16 @@
 
                 const imageInfo = document.createElement('div');
                 imageInfo.className = 'image-info';
+
+                // Add delete button if file exists
+                if (fileInfo.exists !== false) {
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'modal-delete-btn';
+                    deleteBtn.textContent = '🗑️';
+                    deleteBtn.title = 'Delete file';
+                    deleteBtn.onclick = () => deleteFileFromModal(fileInfo.path, groupIndex, index);
+                    imageInfo.appendChild(deleteBtn);
+                }
 
                 const filename = document.createElement('div');
                 filename.className = `image-filename${fileInfo.exists === false ? ' file-missing' : ''}`;
@@ -898,6 +418,21 @@
         function closeImageModal() {
             const modal = document.getElementById('image-modal');
             modal.classList.remove('show');
+            currentGroupIndex = -1; // Reset current group index
+        }
+
+        function navigateToGroup(newGroupIndex) {
+            // Wrap around navigation
+            if (newGroupIndex < 0) {
+                newGroupIndex = duplicateGroups.length - 1;
+            } else if (newGroupIndex >= duplicateGroups.length) {
+                newGroupIndex = 0;
+            }
+
+            // Navigate to the new group
+            if (duplicateGroups[newGroupIndex]) {
+                openImageComparison(newGroupIndex);
+            }
         }
 
         // Close modal when clicking outside of it
@@ -907,10 +442,21 @@
             }
         });
 
-        // Close modal with Escape key
+        // Handle keyboard navigation
         document.addEventListener('keydown', function(event) {
+            const modal = document.getElementById('image-modal');
+            const isModalOpen = modal.classList.contains('show');
+
+            if (!isModalOpen) return;
+
             if (event.key === 'Escape') {
                 closeImageModal();
+            } else if (event.key === 'ArrowLeft') {
+                navigateToGroup(currentGroupIndex - 1);
+                event.preventDefault(); // Prevent default scrolling behavior
+            } else if (event.key === 'ArrowRight') {
+                navigateToGroup(currentGroupIndex + 1);
+                event.preventDefault(); // Prevent default scrolling behavior
             }
         });
 
@@ -1051,6 +597,50 @@
 
             content.innerHTML = `<div class="error">${message}</div>`;
             results.classList.remove('hide');
+        }
+
+        async function deleteFileFromModal(filePath, groupIndex, fileIndex) {
+            // Show confirmation alert - user can just hit enter to confirm
+            if (!confirm(`Delete file: ${filePath}?\n\nPress OK to delete.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/delete-file', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ path: filePath }),
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    // Remove the file from the duplicate group
+                    duplicateGroups[groupIndex].splice(fileIndex, 1);
+
+                    // If group is empty, remove it entirely and close modal
+                    if (duplicateGroups[groupIndex].length === 0) {
+                        duplicateGroups.splice(groupIndex, 1);
+                        closeImageModal();
+                    } else {
+                        // Reopen the modal with updated data
+                        openImageComparison(groupIndex);
+                    }
+
+                    // Refresh the results display
+                    showResults({
+                        success: true,
+                        message: `File deleted successfully. Showing ${duplicateGroups.length} remaining duplicate groups.`,
+                        duplicates: duplicateGroups
+                    });
+                } else {
+                    showError(`Failed to delete file: ${result.message}`);
+                }
+            } catch (error) {
+                showError(`Network error: ${error.message}`);
+            }
         }
     </script>
     </body>

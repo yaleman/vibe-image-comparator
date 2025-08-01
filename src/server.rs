@@ -2,7 +2,7 @@ use anyhow::Result;
 use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
-    response::{Html, Json, Response},
+    response::{Json, Response},
     routing::{get, post},
     Router,
 };
@@ -78,6 +78,17 @@ pub struct CheckFilesResponse {
     files: Vec<FileInfo>,
 }
 
+#[derive(Deserialize)]
+pub struct DeleteFileRequest {
+    path: String,
+}
+
+#[derive(Serialize)]
+pub struct DeleteFileResponse {
+    success: bool,
+    message: String,
+}
+
 pub async fn start_server(
     config: Config,
     threshold_override: Option<u32>,
@@ -91,11 +102,13 @@ pub async fn start_server(
 
     let app = Router::new()
         .route("/", get(serve_index))
+        .route("/styles.css", get(serve_css))
         .route("/api/scan", post(handle_scan))
         .route("/api/matches", get(handle_matches))
         .route("/api/config", get(handle_config))
         .route("/api/image/{*path}", get(serve_image))
         .route("/api/check-files", post(check_files_exist))
+        .route("/api/delete-file", post(delete_file))
         .with_state(Arc::new(state));
 
     let listener = TcpListener::bind("127.0.0.1:8080").await?;
@@ -106,19 +119,29 @@ pub async fn start_server(
     Ok(())
 }
 
-async fn serve_index() -> Html<&'static str> {
-    Html(include_str!("../static/index.html"))
+async fn serve_index() -> Result<Response, StatusCode> {
+    let html_content = include_str!("../static/index.html");
+
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+        .header(header::PRAGMA, "no-cache")
+        .header(header::EXPIRES, "0")
+        .body(html_content.into())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(response)
 }
 
 async fn handle_scan(
     State(state): State<Arc<AppState>>,
     Json(request): Json<ScanRequest>,
 ) -> Result<Json<ScanResponse>, StatusCode> {
-    let effective_config = state.config.with_overrides(
-        state.grid_size_override,
-        state.threshold_override,
-        None,
-    );
+    let effective_config =
+        state
+            .config
+            .with_overrides(state.grid_size_override, state.threshold_override, None);
     let cache = HashCache::new(effective_config.database_path.as_deref())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -190,11 +213,10 @@ async fn handle_matches(
     State(state): State<Arc<AppState>>,
     Query(query): Query<MatchesQuery>,
 ) -> Result<Json<MatchesResponse>, StatusCode> {
-    let effective_config = state.config.with_overrides(
-        state.grid_size_override,
-        state.threshold_override,
-        None,
-    );
+    let effective_config =
+        state
+            .config
+            .with_overrides(state.grid_size_override, state.threshold_override, None);
     let cache = HashCache::new(effective_config.database_path.as_deref())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -235,8 +257,12 @@ async fn handle_matches(
 
 async fn handle_config(State(state): State<Arc<AppState>>) -> Json<ConfigResponse> {
     let response = ConfigResponse {
-        grid_size: state.grid_size_override.unwrap_or(state.config.grid_size.unwrap_or(128)),
-        threshold: state.threshold_override.unwrap_or(state.config.threshold.unwrap_or(15)),
+        grid_size: state
+            .grid_size_override
+            .unwrap_or(state.config.grid_size.unwrap_or(128)),
+        threshold: state
+            .threshold_override
+            .unwrap_or(state.config.threshold.unwrap_or(15)),
         database_path: state.config.database_path.clone(),
     };
 
@@ -314,4 +340,85 @@ async fn check_files_exist(Json(request): Json<CheckFilesRequest>) -> Json<Check
         .collect();
 
     Json(CheckFilesResponse { files })
+}
+
+async fn serve_css() -> Result<Response, StatusCode> {
+    let css_content = include_str!("../static/styles.css");
+
+    let response = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/css")
+        .header(header::CACHE_CONTROL, "no-cache, no-store, must-revalidate")
+        .header(header::PRAGMA, "no-cache")
+        .header(header::EXPIRES, "0")
+        .body(css_content.into())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(response)
+}
+
+async fn delete_file(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<DeleteFileRequest>,
+) -> Json<DeleteFileResponse> {
+    let file_path = std::path::Path::new(&request.path);
+
+    // Security check: ensure the path is absolute
+    if !file_path.is_absolute() {
+        return Json(DeleteFileResponse {
+            success: false,
+            message: "Path must be absolute".to_string(),
+        });
+    }
+
+    // Check if file exists
+    if !file_path.exists() {
+        return Json(DeleteFileResponse {
+            success: false,
+            message: "File does not exist".to_string(),
+        });
+    }
+
+    // Check if it's actually a file (not a directory)
+    if !file_path.is_file() {
+        return Json(DeleteFileResponse {
+            success: false,
+            message: "Path is not a file".to_string(),
+        });
+    }
+
+    // Get the effective config for database path
+    let effective_config =
+        state
+            .config
+            .with_overrides(state.grid_size_override, state.threshold_override, None);
+
+    // Attempt to delete the file
+    match std::fs::remove_file(file_path) {
+        Ok(()) => {
+            info!("Deleted file: {}", file_path.display());
+
+            // Remove file from database
+            if let Ok(cache) = HashCache::new(effective_config.database_path.as_deref()) {
+                if let Err(e) = cache.remove_file_entry(file_path) {
+                    warn!("Failed to remove file from database: {}", e);
+                    // Don't fail the entire operation if database cleanup fails
+                }
+            } else {
+                warn!("Failed to connect to database for cleanup");
+            }
+
+            Json(DeleteFileResponse {
+                success: true,
+                message: "File deleted successfully".to_string(),
+            })
+        }
+        Err(e) => {
+            error!("Failed to delete file {}: {}", file_path.display(), e);
+            Json(DeleteFileResponse {
+                success: false,
+                message: format!("Failed to delete file: {e}"),
+            })
+        }
+    }
 }
