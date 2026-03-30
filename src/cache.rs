@@ -431,8 +431,12 @@ impl HashCache {
             hasher.update(path.as_bytes());
             hasher.update(hash.as_bytes());
         }
-
-        Ok(format!("{:x}", hasher.finalize()))
+        let digest = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<String>();
+        Ok(digest)
     }
 
     /// Store duplicate groups for a given threshold

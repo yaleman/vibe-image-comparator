@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use crate::cache::{FileMetadata, HashCache};
+use crate::hexit::encode_lower_hex;
 
 #[derive(Debug, Clone)]
 pub struct ImageMetadata {
@@ -16,11 +17,7 @@ pub struct ImageMetadata {
 }
 
 pub fn calculate_file_sha256(path: &Path) -> Result<String> {
-    let data = fs::read(path)?;
-    let mut hasher = Sha256::new();
-    hasher.update(&data);
-    let result = hasher.finalize();
-    Ok(format!("{result:x}"))
+    Ok(encode_lower_hex(Sha256::digest(&fs::read(path)?)))
 }
 
 pub fn get_file_metadata(path: &Path) -> Result<(u64, String)> {
