@@ -5,17 +5,13 @@ use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
 use tracing::{error, info, warn};
-
-mod cache;
-mod config;
-mod hasher;
-mod scanner;
-mod server;
-
-use cache::HashCache;
-use config::{load_config, show_config_with_overrides};
-use hasher::{find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache};
-use scanner::scan_for_images;
+use vibe_image_comparator::cache::HashCache;
+use vibe_image_comparator::config::{load_config, show_config_with_overrides};
+use vibe_image_comparator::hasher::{
+    find_duplicates, generate_hashes_with_cache, get_duplicates_from_cache,
+};
+use vibe_image_comparator::scanner::scan_for_images;
+use vibe_image_comparator::server;
 
 #[derive(Parser)]
 #[command(name = "vibe-image-comparator")]
