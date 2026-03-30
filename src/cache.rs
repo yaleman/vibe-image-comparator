@@ -6,6 +6,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info};
 
+use crate::hex::encode_lower_hex;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     pub grid_size: Option<u32>,
@@ -431,12 +433,8 @@ impl HashCache {
             hasher.update(path.as_bytes());
             hasher.update(hash.as_bytes());
         }
-        let digest = hasher
-            .finalize()
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect::<String>();
-        Ok(digest)
+
+        Ok(encode_lower_hex(hasher.finalize()))
     }
 
     /// Store duplicate groups for a given threshold

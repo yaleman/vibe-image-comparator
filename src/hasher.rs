@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use crate::cache::{FileMetadata, HashCache};
-use crate::hexit::encode_lower_hex;
+use crate::hex::encode_lower_hex;
 
 #[derive(Debug, Clone)]
 pub struct ImageMetadata {
