@@ -886,9 +886,9 @@ dependencies = [
 
 [[package]]
 name = "imghash"
-version = "1.5.0"
+version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82a7c31ee3c2ac77208e1b543cc6b83b9ea59c0cbb43ed2b2acae4cda22d3692"
+checksum = "7b87fd56614e659cd68314326b3455875e86d3c9ea9f3c226a1d91b8c52bad29"
 dependencies = [
  "bitvec",
  "image",
