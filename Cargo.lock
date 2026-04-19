@@ -886,13 +886,13 @@ dependencies = [
 
 [[package]]
 name = "imghash"
-version = "1.6.0"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b87fd56614e659cd68314326b3455875e86d3c9ea9f3c226a1d91b8c52bad29"
+checksum = "5ac5ad71a5f6f43dfff0825be257d7a62224a2b50dc965a2fdecbec0808d41a4"
 dependencies = [
  "bitvec",
  "image",
- "rayon",
+ "thiserror",
 ]
 
 [[package]]
@@ -1727,18 +1727,18 @@ dependencies = [
 
 [[package]]
 name = "thiserror"
-version = "2.0.12"
+version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "567b8a2dae586314f7be2a752ec7474332959c6460e02bde30d702a66d488708"
+checksum = "4288b5bcbc7920c07a1149a35cf9590a2aa808e0bc1eafaade0b80947865fbc4"
 dependencies = [
  "thiserror-impl",
 ]
 
 [[package]]
 name = "thiserror-impl"
-version = "2.0.12"
+version = "2.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f7cf42b4507d8ea322120659672cf1b9dbb93f8f2d4ecfd6e51350ff5b17a1d"
+checksum = "ebc4ee7f67670e9b64d05fa4253e753e016c6c95ff35b89b7941d6b856dec1d5"
 dependencies = [
  "proc-macro2",
  "quote",
