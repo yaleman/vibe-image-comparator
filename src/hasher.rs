@@ -31,19 +31,19 @@ pub fn generate_rotation_invariant_hash_safe(
     hasher: &PerceptualHasher,
     img: &image::DynamicImage,
 ) -> Result<ImageHash> {
-    let original_hash = hasher.hash_from_img(img);
+    let original_hash = hasher.hash_from_img(img)?;
     let rotated_90 = img.rotate90();
-    let rotated_90_hash = hasher.hash_from_img(&rotated_90);
+    let rotated_90_hash = hasher.hash_from_img(&rotated_90)?;
     let rotated_180 = img.rotate180();
-    let rotated_180_hash = hasher.hash_from_img(&rotated_180);
+    let rotated_180_hash = hasher.hash_from_img(&rotated_180)?;
     let rotated_270 = img.rotate270();
-    let rotated_270_hash = hasher.hash_from_img(&rotated_270);
+    let rotated_270_hash = hasher.hash_from_img(&rotated_270)?;
 
     let mut candidates = vec![
-        (original_hash.encode(), original_hash),
-        (rotated_90_hash.encode(), rotated_90_hash),
-        (rotated_180_hash.encode(), rotated_180_hash),
-        (rotated_270_hash.encode(), rotated_270_hash),
+        (original_hash.encode()?, original_hash),
+        (rotated_90_hash.encode()?, rotated_90_hash),
+        (rotated_180_hash.encode()?, rotated_180_hash),
+        (rotated_270_hash.encode()?, rotated_270_hash),
     ];
 
     candidates.sort_by_key(|(encoded, _)| encoded.clone());
@@ -131,11 +131,22 @@ pub fn generate_hashes_with_cache(
                 match image::open(&metadata.path) {
                     Ok(img) => match generate_rotation_invariant_hash_safe(&hasher, &img) {
                         Ok(hash) => {
+                            let perceptual_hash = match hash.encode() {
+                                Ok(perceptual_hash) => perceptual_hash,
+                                Err(e) => {
+                                    warn!(
+                                        "Could not encode hash for {}: {}",
+                                        metadata.path.display(),
+                                        e
+                                    );
+                                    return Err(metadata.path.clone());
+                                }
+                            };
                             let file_metadata = FileMetadata {
                                 path: metadata.path.clone(),
                                 size: metadata.size,
                                 sha256: metadata.sha256.clone(),
-                                perceptual_hash: hash.encode(),
+                                perceptual_hash,
                             };
                             Ok((metadata.path.clone(), hash, Some(file_metadata)))
                         }

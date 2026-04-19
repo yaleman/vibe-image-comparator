@@ -283,8 +283,14 @@ fn test_cache_optimization_skips_file_processing() {
     for i in 0..3 {
         assert_eq!(hashes1[i].0, hashes2[i].0, "Paths should match");
         assert_eq!(
-            hashes1[i].1.encode(),
-            hashes2[i].1.encode(),
+            hashes1[i]
+                .1
+                .encode()
+                .expect("hash should encode on first run"),
+            hashes2[i]
+                .1
+                .encode()
+                .expect("hash should encode on second run"),
             "Hash strings should be identical"
         );
     }
