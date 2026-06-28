@@ -27,7 +27,7 @@ edits, or rotations.
 - Supports common image formats: jpg, jpeg, png, gif, bmp, tiff, tif, webp
 - Follows symbolic links during traversal
 - **Hidden directory filtering**: Skips directories starting with `.` by default
-  (use `-.` flag to include them)
+  (use `-a` or `--include-hidden` flag to include them)
 
 ### Hash Generation (`generate_hashes`)
 
@@ -88,7 +88,7 @@ cargo run -- /path/to/images
 cargo run -- /path/to/images --threshold 3 --grid-size 32
 
 # Include hidden directories (starting with .)
-cargo run -- /path/to/images -.
+cargo run -- /path/to/images -a
 
 # Enable debug output and skip file validation
 cargo run -- /path/to/images --debug --skip-validation

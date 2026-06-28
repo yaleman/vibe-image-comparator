@@ -125,6 +125,7 @@ pub async fn start_server(
     config: Config,
     threshold_override: Option<u32>,
     grid_size_override: Option<u32>,
+    port: u16,
 ) -> Result<()> {
     let state = AppState {
         config,
@@ -141,13 +142,23 @@ pub async fn start_server(
         .route("/api/image/{*path}", get(serve_image))
         .route("/api/check-files", post(check_files_exist))
         .route("/api/delete-file", post(delete_file))
+        .route("/api/export", get(export_matches))
         .with_state(Arc::new(state));
 
-    let listener = TcpListener::bind("127.0.0.1:8080").await?;
-    info!("🌐 Web server running at http://127.0.0.1:8080");
+    let addr = format!("127.0.0.1:{port}");
+    let listener = TcpListener::bind(&addr).await?;
+    info!("🌐 Web server running at http://{addr}");
     info!("Press Ctrl+C to stop the server");
 
-    axum::serve(listener, app).await?;
+    let shutdown_signal = tokio::signal::ctrl_c();
+    info!("Waiting for Ctrl+C...");
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            shutdown_signal.await.ok();
+            info!("Shutting down server...");
+        })
+        .await?;
     Ok(())
 }
 
@@ -477,4 +488,59 @@ async fn delete_file(
             })
         }
     }
+}
+
+#[derive(Serialize)]
+pub struct ExportResponse {
+    success: bool,
+    format: String,
+    data: String,
+    duplicate_count: usize,
+    total_files: usize,
+}
+
+async fn export_matches(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<MatchesQuery>,
+) -> Result<Json<ExportResponse>, StatusCode> {
+    let effective_config =
+        state
+            .config
+            .with_overrides(state.grid_size_override, state.threshold_override, None);
+    let cache = HashCache::new(effective_config.database_path.as_deref())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    let threshold = query
+        .threshold
+        .or(state.threshold_override)
+        .unwrap_or(effective_config.threshold);
+
+    let result = tokio::task::spawn_blocking(move || -> Result<ExportResponse, anyhow::Error> {
+        let duplicates = get_duplicates_from_cache(&cache, threshold, None, None)?;
+
+        let export_data = serde_json::json!({
+            "threshold": threshold,
+            "exported_at": chrono::Utc::now().to_rfc3339(),
+            "duplicate_groups": duplicates.iter().enumerate().map(|(i, group)| {
+                serde_json::json!({
+                    "group_id": i + 1,
+                    "file_count": group.len(),
+                    "files": group.iter().map(|p| p.display().to_string()).collect::<Vec<_>>()
+                })
+            }).collect::<Vec<_>>()
+        });
+
+        Ok(ExportResponse {
+            success: true,
+            format: "json".to_string(),
+            data: serde_json::to_string_pretty(&export_data)?,
+            duplicate_count: duplicates.len(),
+            total_files: duplicates.iter().map(|g| g.len()).sum(),
+        })
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+    Ok(Json(result))
 }
